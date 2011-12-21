@@ -105,6 +105,8 @@ jurisdiction and venue of these courts.
 #include <SDKBitMap.hpp>
 
 using namespace streamsdk;
+
+#define AES_IV_SIZE 16
 /**
  * AESEncryptDecrypt 
  * Class implements OpenCL AESEncryptDecrypt sample
@@ -179,33 +181,26 @@ namespace AES
         cl_double       totalProgramTime;/**< Time for program execution */
         cl_double    referenceKernelTime;/**< Time for reference implementation */
         cl_uchar      *input;            /**< Input array */
-        cl_uchar      *key;              /**< Encryption Key */
-        cl_uchar      *expandedKey;      /**< Encryption Key after expanding*/
-        cl_uchar      *roundKey;         /**< Encryption Key after expanding rounded*/
         cl_uchar      *output;           /**< Output array */
-        cl_uchar      *verificationOutput;/**< Output array for reference implementation */
+        cl_uchar      *keys;              /**< Encryption Key */
+        cl_uchar      *ivs;              /**< Initial data */
+	cl_uint	      *pkt_offset;       /**< Packet Offset */
         cl_context   context;            /**< CL context */
         cl_device_id *devices;           /**< CL device list */
         cl_mem       inputBuffer;        /**< CL memory input buffer */
         cl_mem       outputBuffer;       /**< CL memory output buffer */
-        cl_mem       rKeyBuffer;  
-        cl_mem       sBoxBuffer;
-        cl_mem       rsBoxBuffer;
+	cl_mem       pktOffsetBuffer;
+	cl_mem       keyBuffer;
+	cl_mem       ivsBuffer;
         cl_command_queue commandQueue;   /**< CL command queue */
         cl_program   program;            /**< CL program  */
         cl_kernel    kernel;             /**< CL kernel */
         cl_bool      decrypt;
     
-        std::string  inFilename;         /**< filename of the input image */
-        std::string  outFilename;        /**< filename of the input image */
-        uchar4      *pixels;            
         cl_uint      keySizeBits;
         cl_uint      keySize;
         cl_uint      explandedKeySize;
         cl_uint      rounds;
-        cl_int       width;
-        cl_int       height;
-        SDKBitMap    image;
 
         size_t       maxWorkGroupSize;   /**< Device Specific Information */
         cl_uint         maxDimensions;
@@ -217,12 +212,11 @@ namespace AES
         cl_ulong    neededLocalMemory;
         int                iterations;    /**< Number of iterations for kernel execution */
 
+	/* For network processing */
+	cl_uint 	num_flows;	/* Number of flows for processing */
+	cl_uint		flow_len;	/* The length of each flow, 16KB typically */
+
    
-        private:
-        void convertColorToGray(const uchar4 *pixels, cl_uchar *gray);
-        void convertGrayToGray(const uchar4 *pixels, cl_uchar *gray);
-        void convertGrayToPixels(const cl_uchar *gray, uchar4 *pixels);     
-        
         public:
         /** 
          * Constructor 
@@ -234,16 +228,16 @@ namespace AES
                 seed = 123;
                 input  = NULL;
                 output = NULL;
-                key    = NULL;
-                verificationOutput = NULL;
-                inFilename = "input512.bmp";
-                outFilename = "output.bmp";
+                keys    = NULL;
+                //verificationOutput = NULL;
                 decrypt = false;
                 keySizeBits = 128;
                 rounds = 10;
                 setupTime = 0;
                 totalKernelTime = 0;
                 iterations = 1;
+		num_flows = 2048;
+		flow_len = 16384;
             }
     
         /** 
@@ -256,16 +250,16 @@ namespace AES
                 seed = 123;
                 input  = NULL;
                 output = NULL;
-                key    = NULL;
-                verificationOutput = NULL;
-                inFilename = "input512.bmp";
-                outFilename = "output.bmp";
+                keys    = NULL;
+                //verificationOutput = NULL;
                 decrypt = false;
                 keySizeBits = 128;
                 rounds = 10;
                 setupTime = 0;
                 totalKernelTime = 0;
                 iterations = 1;
+		num_flows = 2048;
+		flow_len = 16384;
             }
     
         /**
@@ -290,49 +284,15 @@ namespace AES
          */
         int runCLKernels();
     
-        /**
-         * TODO:
-         */
-        /* common functions for both encryption and decryption */
-        void mixColumns(cl_uchar * state, cl_bool inverse);
-        void subBytes(cl_uchar * state, cl_bool inverse);
-        void addRoundKey(cl_uchar * state, cl_uchar * roundKey);
-        void shiftRows(cl_uchar * state, cl_bool inverse);
-        cl_uchar galoisMultiplication(cl_uchar a, cl_uchar b);
+	/* Generate Input Data */
+	void write_pkt_offset(cl_uint *pkt_offset);
+	void set_random(cl_uchar *input, int len);
 
-        /* encryption specific*/
-        void aesMain(cl_uchar * state, cl_uchar * expandedKey, cl_uint rounds);
-        void aesRound(cl_uchar * state, cl_uchar * roundKey);
-        void mixColumn(cl_uchar *column);
-        void shiftRow(cl_uchar * state, cl_uchar nbr);
-        cl_uchar getSBoxValue(cl_uint num);
-       
-        /* decryption specific */ 
-        void aesMainInv(cl_uchar * state, cl_uchar * expandedKey, cl_uint rounds);
-        void aesRoundInv(cl_uchar * state, cl_uchar * roundKey);
-        void mixColumnInv(cl_uchar *column);
-        void shiftRowInv(cl_uchar * state, cl_uchar nbr);
-        cl_uchar getSBoxInvert(cl_uint num);
 
-        /* key generation specific functions */
-        void createRoundKey(cl_uchar * expandedKey, cl_uchar * roundKey);
-        cl_uchar getRconValue(cl_uint num);
-        void rotate(cl_uchar * word);
-        void core(cl_uchar * word, cl_uint iter);
-        void keyExpansion(cl_uchar * key, cl_uchar * expandedKey,
-                          cl_uint keySize, cl_uint explandedKeySize);
-
-        void AESEncryptDecryptCPUReference(cl_uchar * output, 
-                                           cl_uchar * input , 
-                                           cl_uchar * key   , 
-                                           cl_uint keySize  , 
-                                           cl_uint width    , 
-                                           cl_uint height   , 
-                                           cl_bool inverse  );
         /**
          * Override from SDKSample. Print sample stats.
          */
-        void printStats();
+        //void printStats();
     
         /**
          * Override from SDKSample. Initialize 

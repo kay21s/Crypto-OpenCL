@@ -94,111 +94,87 @@ jurisdiction and venue of these courts.
 
 using namespace AES;
 
+
+void AESEncryptDecrypt::write_pkt_offset(cl_uint *pkt_offset)
+{
+	int i = 0;
+	cl_uint offset = 0;
+	for (i = 0; i < num_flows; i ++) {
+		pkt_offset[i] = offset;
+		offset += flow_len;
+	}
+}
+
+void AESEncryptDecrypt::set_random(cl_uchar *input, int len)
+{
+	int i;
+	for (i = 0; i < len; i ++)
+		input[i] = rand() % 256;
+}
+
 int AESEncryptDecrypt::setupAESEncryptDecrypt()
 {
-    cl_uint sizeBytes = width*height*sizeof(cl_uchar);
+    assert(1 == sizeof(cl_uchar));
 
-    input = (cl_uchar*)malloc(sizeBytes); 
+    // ------- Input Buffer------- 
+    input = (cl_uchar *)malloc(num_flows * flow_len * sizeof(cl_uchar));
     if(input == NULL)
     {
         sampleCommon->error("Failed to allocate host memory. (input)");
         return SDK_FAILURE;
     }
 
-    /* initialize the input array, do NOTHING but assignment when decrypt*/
-    if(!decrypt)
-       convertColorToGray(pixels, input);
-    else
-       convertGrayToGray(pixels, input);
+    /* Generate Randomized Input data -- Kay */
+    set_random(input, num_flows * flow_len);
 
-    /* 1 Byte = 8 bits */
-    keySize = keySizeBits/8;
-  
-    /* due to unknown represenation of cl_uchar */ 
-    keySizeBits = keySize*sizeof(cl_uchar); 
-
-    key = (cl_uchar*)malloc(keySizeBits);
-
-    /* random initialization of key */
-    sampleCommon->fillRandom<cl_uchar>(key, keySize, 1, 0, 255, seed); 
-
-    /* expand the key */
-    explandedKeySize = (rounds+1)*keySize;  
-    expandedKey = (cl_uchar*)malloc(explandedKeySize*sizeof(cl_uchar));
-    roundKey    = (cl_uchar*)malloc(explandedKeySize*sizeof(cl_uchar));
-
-    keyExpansion(key, expandedKey, keySize, explandedKeySize);
-    for(cl_uint i = 0; i< rounds+1; ++i)
-    {
-        createRoundKey(expandedKey + keySize*i, roundKey + keySize*i);
-    }
-
-    output = (cl_uchar*)malloc(sizeBytes);
+    // ------- Output Buffer------- 
+    output = (cl_uchar *)malloc(num_flows * flow_len * sizeof(cl_uchar));
     if(output == NULL)
     {
         sampleCommon->error("Failed to allocate host memory. (output)");
         return SDK_FAILURE;
     } 
 
-    if(!quiet) 
+    // ------- Pkt Offset Buffer------- 
+    pkt_offset = (cl_uint *)malloc(num_flows * sizeof(cl_uint));
+    if(pkt_offset == NULL)
     {
-        if(decrypt)
-        {
-            std::cout << "Decrypting Image ...." << std::endl;
-        }
-        else
-        {
-            std::cout << "Encrypting Image ...." << std::endl;
-        }
-
-        std::cout << "Input Image : " << inFilename << std::endl;
-        std::cout << "Key : ";
-        for(cl_uint i=0; i < keySize; ++i)
-        {
-            std::cout << (cl_uint)key[i] << " ";
-        }
-        std::cout << std::endl;
+        sampleCommon->error("Failed to allocate host memory. (pkt_offset)");
+        return SDK_FAILURE;
     }
 
+    // init packet offset array
+    write_pkt_offset(pkt_offset);
+
+    // ------- Key Buffer------- 
+    /* 1 Byte = 8 bits */
+    keySize = keySizeBits/8;
+  
+    /* due to unknown represenation of cl_uchar */ 
+    keySizeBits = keySize*sizeof(cl_uchar); 
+
+    keys = (cl_uchar *)malloc(num_flows * keySize);
+    if(keys == NULL)
+    {
+        sampleCommon->error("Failed to allocate host memory. (keys)");
+        return SDK_FAILURE;
+    }
+
+    /* Generate Randomized Keys*/
+    set_random(keys, num_flows * keySize);
+
+    // ------- Ivs Buffer------- 
+    ivs = (cl_uchar *)malloc(num_flows * AES_IV_SIZE);
+    if(ivs == NULL)
+    {
+        sampleCommon->error("Failed to allocate host memory. (ivs)");
+        return SDK_FAILURE;
+    }
+
+    /* Generate Randomized Ivs */
+    set_random(ivs, num_flows * AES_IV_SIZE);
+
     return SDK_SUCCESS;
-}
-
-void
-AESEncryptDecrypt::convertColorToGray(const uchar4 *pixels, cl_uchar *gray)
-{
-    for(cl_int i=0; i< height; ++i)
-        for(cl_int j=0; j<width; ++j)
-        {
-            cl_uint index = i*width + j;
-            // gray = (0.3*R + 0.59*G + 0.11*B)
-            gray[index] = cl_uchar (pixels[index].x * 0.3  + 
-                                    pixels[index].y * 0.59 + 
-                                    pixels[index].z * 0.11 );
-        }
-}
-
-void
-AESEncryptDecrypt::convertGrayToGray(const uchar4 *pixels, cl_uchar *gray)
-{
-    for(cl_int i=0; i< height; ++i)
-        for(cl_int j=0; j<width; ++j)
-        {
-            cl_uint index = i*width + j;
-            gray[index] = pixels[index].x;
-        }
-}
-
-void
-AESEncryptDecrypt::convertGrayToPixels(const cl_uchar *gray, uchar4 *pixels)
-{
-    for(cl_int i=0; i< height; ++i)
-        for(cl_int j=0; j<width; ++j)
-        {
-            cl_uint index = i*width + j;
-            pixels[index].x = gray[index];
-            pixels[index].y = gray[index];
-            pixels[index].z = gray[index];
-        }
 }
 
 int 
@@ -755,11 +731,12 @@ AESEncryptDecrypt::setupCL(void)
     cl_mem_flags inMemFlags = CL_MEM_READ_ONLY;
     if(isAmdPlatform())
         inMemFlags |= CL_MEM_USE_PERSISTENT_MEM_AMD;
-
+    
+    // input buffer
     inputBuffer = clCreateBuffer(
                     context, 
                     inMemFlags,
-                    sizeof(cl_uchar ) * width * height,
+                    sizeof(cl_uchar ) * num_flows * flow_len,
                     NULL, 
                     &status);
     if(!sampleCommon->checkVal(
@@ -768,56 +745,59 @@ AESEncryptDecrypt::setupCL(void)
                         "clCreateBuffer failed. (inputBuffer)"))
         return SDK_FAILURE;
 
+    // output buffer
     outputBuffer = clCreateBuffer(
                     context, 
                     CL_MEM_WRITE_ONLY | CL_MEM_ALLOC_HOST_PTR,
-                    sizeof(cl_uchar ) * width * height,
+                    sizeof(cl_uchar ) * num_flows * flow_len,
                     NULL, 
                     &status);
-
     if(!sampleCommon->checkVal(
                 status,
                 CL_SUCCESS,
                 "clCreateBuffer failed. (outputBuffer)"))
         return SDK_FAILURE;
 
-    rKeyBuffer = clCreateBuffer(
+    // pkt offset array
+    pktOffsetBuffer = clCreateBuffer(
                     context, 
                     CL_MEM_READ_ONLY | CL_MEM_USE_HOST_PTR,
-                    sizeof(cl_uchar ) * explandedKeySize,
-                    roundKey,
+                    sizeof(cl_uint) * num_flows,
+                    pkt_offset,
                     &status);
-
     if(!sampleCommon->checkVal(
                         status,
                         CL_SUCCESS,
-                        "clCreateBuffer failed. (rKeyBuffer)"))
+                        "clCreateBuffer failed. (pkt offset)"))
         return SDK_FAILURE;
 
-    cl_uchar * sBox;
-    sBox = (cl_uchar *)sbox;
-    sBoxBuffer = clCreateBuffer(
+    // key buffer
+    keyBuffer = clCreateBuffer(
                     context, 
                     CL_MEM_READ_ONLY | CL_MEM_USE_HOST_PTR,
-                    sizeof(cl_uchar ) * 256,
-                    sBox,
+                    keySize * num_flows,
+                    keys,
                     &status);
-
-    cl_uchar * rsBox;
-    rsBox = (cl_uchar *)rsbox;
-    rsBoxBuffer = clCreateBuffer(
-                    context, 
-                    CL_MEM_READ_ONLY | CL_MEM_USE_HOST_PTR,
-                    sizeof(cl_uchar ) * 256,
-                    rsBox,
-                    &status);
-
     if(!sampleCommon->checkVal(
                         status,
                         CL_SUCCESS,
-                        "clCreateBuffer failed. (sBoxBuffer)"))
+                        "clCreateBuffer failed. (key buffer)"))
         return SDK_FAILURE;
-   
+
+    // ivs Buffer
+    ivsBuffer = clCreateBuffer(
+                    context, 
+                    CL_MEM_READ_WRITE | CL_MEM_USE_HOST_PTR,
+                    AES_IV_SIZE * num_flows,
+                    ivs,
+                    &status);
+    if(!sampleCommon->checkVal(
+                        status,
+                        CL_SUCCESS,
+                        "clCreateBuffer failed. (ivs buffer)"))
+        return SDK_FAILURE;
+    
+
     /* create a CL program using the kernel source */
     streamsdk::SDKFile kernelFile;
     std::string kernelPath = sampleCommon->getPath();
@@ -956,11 +936,11 @@ AESEncryptDecrypt::setupCL(void)
     /* get a kernel object handle for a kernel with the given name */
     if(decrypt)
     {
-        kernel = clCreateKernel(program, "AESDecrypt", &status);
+        kernel = clCreateKernel(program, "AES_cbc_128_decrypt", &status);
     }
     else
     {
-        kernel = clCreateKernel(program, "AESEncrypt", &status);
+        kernel = clCreateKernel(program, "AES_cbc_128_encrypt", &status);
     }
         
     if(!sampleCommon->checkVal(
@@ -979,14 +959,8 @@ AESEncryptDecrypt::runCLKernels(void)
     cl_int   status;
     cl_int eventStatus = CL_QUEUED;
     
-    size_t globalThreads[2]= {width / 4, height};
-    size_t localThreads[2] = {64, 4};
-
-    if (localThreads[1] != 4)
-    {
-        sampleCommon->error("localThreads[1] value should be 4 \n");
-        return SDK_FAILURE;
-    }
+    size_t globalThreads[1]= {num_flows};
+    size_t localThreads[1] = {256};
 
     status =  clGetKernelWorkGroupInfo(
                     kernel,
@@ -1003,16 +977,8 @@ AESEncryptDecrypt::runCLKernels(void)
 
     availableLocalMemory = totalLocalMemory - usedLocalMemory; 
 
-    neededLocalMemory  = 2 * localThreads[0] * localThreads[1] * 4;
-
-    std::cout << "neededLocalMemory : " << neededLocalMemory << " availableLocalMemory : " 
-        << availableLocalMemory << std::endl;
-
-    if(neededLocalMemory > availableLocalMemory)
-    {
-        std::cout << "Unsupported: Insufficient local memory on device." << std::endl;
-        return SDK_SUCCESS;
-    }
+    std::cout << " availableLocalMemory : " << availableLocalMemory 
+	     << " usedLocalMemory : "<< usedLocalMemory << std::endl;
 
     /* Check group size against kernelWorkGroupSize */
     status = clGetKernelWorkGroupInfo(kernel,
@@ -1021,8 +987,6 @@ AESEncryptDecrypt::runCLKernels(void)
                                       sizeof(size_t),
                                       &kernelWorkGroupSize,
                                       0);
-
-    std::cout << "kernelWorkGroupSize : " << kernelWorkGroupSize << std::endl;
     if(!sampleCommon->checkVal(
                         status,
                         CL_SUCCESS, 
@@ -1030,16 +994,17 @@ AESEncryptDecrypt::runCLKernels(void)
     {
         return SDK_FAILURE;
     }
+    std::cout << "kernelWorkGroupSize : " << kernelWorkGroupSize << std::endl;
 
-    if((cl_uint)(localThreads[0] * localThreads[1]) > kernelWorkGroupSize )
+    if((cl_uint)(localThreads[0]) > kernelWorkGroupSize )
     {
-        localThreads[0] = kernelWorkGroupSize / 4;
+        std::cout << "Unsupported: Device does not support requested number of work items."<<std::endl;
+        return SDK_SUCCESS;
     }
 
     
     if(localThreads[0] > maxWorkItemSizes[0] ||
-       localThreads[1] > maxWorkItemSizes[1] ||
-       localThreads[0]*localThreads[1] > maxWorkGroupSize)
+       localThreads[0] > maxWorkGroupSize)
     {
         std::cout << "Unsupported: Device does not support requested number of work items."<<std::endl;
         return SDK_SUCCESS;
@@ -1051,7 +1016,7 @@ AESEncryptDecrypt::runCLKernels(void)
                 inputBuffer,
                 CL_FALSE,
                 0,
-                sizeof(cl_uchar ) * width * height,
+                sizeof(cl_uchar ) * num_flows * flow_len,
                 input,
                 0,
                 NULL,
@@ -1070,6 +1035,8 @@ AESEncryptDecrypt::runCLKernels(void)
         return SDK_FAILURE;
 
     eventStatus = CL_QUEUED;
+
+	 // Wait for write to complete FIXME
     while(eventStatus != CL_COMPLETE)
     {
         status = clGetEventInfo(
@@ -1078,7 +1045,7 @@ AESEncryptDecrypt::runCLKernels(void)
                         sizeof(cl_int),
                         &eventStatus,
                         NULL);
-            if(!sampleCommon->checkVal(status,
+        if(!sampleCommon->checkVal(status,
                                CL_SUCCESS, 
                                "clGetEventInfo failed."))
                 return SDK_FAILURE;
@@ -1117,72 +1084,17 @@ AESEncryptDecrypt::runCLKernels(void)
     status = clSetKernelArg(
                     kernel, 
                     2, 
-                    sizeof(cl_mem), 
-                    (void *)&rKeyBuffer);
-    if(!sampleCommon->checkVal(
-                status,
-                CL_SUCCESS,
-                "clSetKernelArg failed. (rKeyBuffer)"))
-        return SDK_FAILURE;
-
-    if(decrypt)
-    {
-        status = clSetKernelArg(
-                    kernel, 
-                    3, 
-                    sizeof(cl_mem), 
-                    (void *)&rsBoxBuffer);
-    }
-    else
-    {
-        status = clSetKernelArg(
-                    kernel, 
-                    3, 
-                    sizeof(cl_mem), 
-                    (void *)&sBoxBuffer);
-    }
-    if(!sampleCommon->checkVal(
-                status,
-                CL_SUCCESS,
-                "clSetKernelArg failed. (SBoxBuffer)"))
-        return SDK_FAILURE;
-
-    status = clSetKernelArg(
-                    kernel, 
-                    4, 
-                    localThreads[0] * localThreads[1] * 4 * sizeof (cl_uchar), 
-                    NULL);
-    if(!sampleCommon->checkVal(
-                status,
-                CL_SUCCESS,
-                "clSetKernelArg failed. (block0)"))
-        return SDK_FAILURE;
-
-    status = clSetKernelArg(
-                    kernel, 
-                    5, 
-                    localThreads[0] * localThreads[1] * 4 * sizeof(cl_uchar), 
-                    NULL);
-    if(!sampleCommon->checkVal(
-                status,
-                CL_SUCCESS,
-                "clSetKernelArg failed. (block1)"))
-        return SDK_FAILURE;
-
-    status = clSetKernelArg(
-                    kernel, 
-                    6, 
                     sizeof(cl_uint), 
-                    (void *)&width);
+                    (void *)&num_flows);
     if(!sampleCommon->checkVal(
                 status,
                 CL_SUCCESS,
-                "clSetKernelArg failed. (width)"))
+                "clSetKernelArg failed. (num_flows)"))
         return SDK_FAILURE;
 
     status = clSetKernelArg(
                     kernel, 
-                    7, 
+                    3, 
                     sizeof(cl_uint), 
                     (void *)&rounds);
     if(!sampleCommon->checkVal(
@@ -1191,6 +1103,38 @@ AESEncryptDecrypt::runCLKernels(void)
                 "clSetKernelArg failed. (rounds)"))
         return SDK_FAILURE;
 
+    status = clSetKernelArg(
+                    kernel, 
+                    4, 
+                    sizeof(cl_mem), 
+                    (void *)&pktOffsetBuffer);
+    if(!sampleCommon->checkVal(
+                status,
+                CL_SUCCESS,
+                "clSetKernelArg failed. (pktOffsetBuffer)"))
+        return SDK_FAILURE;
+
+    status = clSetKernelArg(
+                    kernel, 
+                    5, 
+                    sizeof(cl_mem), 
+                    (void *)&keyBuffer);
+    if(!sampleCommon->checkVal(
+                status,
+                CL_SUCCESS,
+                "clSetKernelArg failed. (keyBuffer)"))
+        return SDK_FAILURE;
+
+    status = clSetKernelArg(
+                    kernel, 
+                    6, 
+                    sizeof(cl_mem), 
+                    (void *)&ivsBuffer);
+    if(!sampleCommon->checkVal(
+                status,
+                CL_SUCCESS,
+                "clSetKernelArg failed. (ivsBuffer)"))
+        return SDK_FAILURE;
 
     /* 
      * Enqueue a kernel run call.
@@ -1199,18 +1143,21 @@ AESEncryptDecrypt::runCLKernels(void)
     status = clEnqueueNDRangeKernel(
             commandQueue,
             kernel,
-            2,
+            1,
             NULL,
             globalThreads,
             localThreads,
             0,
             NULL,
             &ndrEvt);
+
+    std::cout << "After kernel running--------------------------------" << std::endl;
     if(!sampleCommon->checkVal(
                 status,
                 CL_SUCCESS,
                 "clEnqueueNDRangeKernel failed."))
         return SDK_FAILURE;
+    std::cout << "--------------------------------" << std::endl;
 
     status = clFlush(commandQueue);
     if(!sampleCommon->checkVal(
@@ -1247,7 +1194,7 @@ AESEncryptDecrypt::runCLKernels(void)
                 outputBuffer,
                 CL_FALSE,
                 0,
-                width * height * sizeof(cl_uchar),
+                num_flows * flow_len * sizeof(cl_uchar),
                 output,
                 0,
                 NULL,
@@ -1266,414 +1213,43 @@ AESEncryptDecrypt::runCLKernels(void)
         return SDK_FAILURE;
 
     eventStatus = CL_QUEUED;
+	 // FIXME: wait for read to complete
     while(eventStatus != CL_COMPLETE)
     {
-        status = clGetEventInfo(
-                        readEvt, 
-                        CL_EVENT_COMMAND_EXECUTION_STATUS, 
-                        sizeof(cl_int),
-                        &eventStatus,
-                        NULL);
-            if(!sampleCommon->checkVal(status,
-                               CL_SUCCESS, 
-                               "clGetEventInfo failed."))
-                return SDK_FAILURE;
+	    status = clGetEventInfo(
+			    readEvt, 
+			    CL_EVENT_COMMAND_EXECUTION_STATUS, 
+			    sizeof(cl_int),
+			    &eventStatus,
+			    NULL);
+	    if(!sampleCommon->checkVal(status,
+				    CL_SUCCESS, 
+				    "clGetEventInfo failed."))
+		    return SDK_FAILURE;
     }
 
     status = clReleaseEvent(readEvt);
     if(!sampleCommon->checkVal(status,
-                               CL_SUCCESS,
-                               "clReleaseEvent failed. (readEvt)"))
-        return SDK_FAILURE;
+			    CL_SUCCESS,
+			    "clReleaseEvent failed. (readEvt)"))
+	    return SDK_FAILURE;
 
     return SDK_SUCCESS;
 }
 
-cl_uchar 
-AESEncryptDecrypt::getRconValue(cl_uint num)
-{
-    return Rcon[num];
-}
-
-void
-AESEncryptDecrypt::rotate(cl_uchar * word)
-{
-    cl_uchar c = word[0];
-    for(cl_uint i=0; i<3; ++i)
-    {
-        word[i] = word[i+1];
-    }
-    word[3] = c;
-}
-
-void
-AESEncryptDecrypt::core(cl_uchar * word, cl_uint iter)
-{
-    rotate(word);
-    
-    for(cl_uint i=0; i < 4; ++i)
-    {
-        word[i] = getSBoxValue(word[i]);
-    }    
-    
-    word[0] = word[0]^getRconValue(iter);
-}
-
-void
-AESEncryptDecrypt::keyExpansion(cl_uchar * key, cl_uchar * expandedKey,
-                                cl_uint keySize, cl_uint explandedKeySize)
-{
-    cl_uint currentSize    = 0;
-    cl_uint rConIteration = 1;
-    cl_uchar temp[4]      = {0};
-    
-    for(cl_uint i=0; i < keySize; ++i)
-    {
-        expandedKey[i] = key[i];
-    }
-    
-    currentSize += keySize;
-
-    while(currentSize < explandedKeySize)
-    {
-        for(cl_uint i=0; i < 4; ++i)
-        {
-            temp[i] = expandedKey[(currentSize - 4) + i];
-        }
-
-        if(currentSize%keySize == 0)
-        {
-            core(temp, rConIteration++);
-        }
-        
-        //XXX: add extra SBOX here if the keySize is 32 Bytes
-        
-        for(cl_uint i=0; i < 4; ++i)
-        {
-            expandedKey[currentSize] = expandedKey[currentSize - keySize]^temp[i];
-            currentSize++;
-        }
-    }
-}
-
-cl_uchar 
-AESEncryptDecrypt::getSBoxValue(cl_uint num)
-{
-    return sbox[num];
-}
-
-cl_uchar 
-AESEncryptDecrypt::getSBoxInvert(cl_uint num)
-{
-    return rsbox[num];
-}
-
-cl_uchar
-AESEncryptDecrypt::galoisMultiplication(cl_uchar a, cl_uchar b)
-{
-    cl_uchar p = 0; 
-    for(cl_uint i=0; i < 8; ++i)
-    {
-        if((b&1) == 1)
-        {
-            p^=a;
-        }
-        cl_uchar hiBitSet = (a & 0x80);
-        a <<= 1;
-        if(hiBitSet == 0x80)
-        {
-            a ^= 0x1b;
-        }
-        b >>= 1;
-    }
-    return p;
-}
-
-void
-AESEncryptDecrypt::mixColumn(cl_uchar *column)
-{
-    cl_uchar cpy[4];
-    for(cl_uint i=0; i < 4; ++i)
-    {
-        cpy[i] = column[i];
-    }
-    column[0] = galoisMultiplication(cpy[0], 2)^
-                galoisMultiplication(cpy[3], 1)^
-                galoisMultiplication(cpy[2], 1)^
-                galoisMultiplication(cpy[1], 3);
-    
-    column[1] = galoisMultiplication(cpy[1], 2)^
-                galoisMultiplication(cpy[0], 1)^
-                galoisMultiplication(cpy[3], 1)^
-                galoisMultiplication(cpy[2], 3);
-    
-    column[2] = galoisMultiplication(cpy[2], 2)^
-                galoisMultiplication(cpy[1], 1)^
-                galoisMultiplication(cpy[0], 1)^
-                galoisMultiplication(cpy[3], 3);
-    
-    column[3] = galoisMultiplication(cpy[3], 2)^
-                galoisMultiplication(cpy[2], 1)^
-                galoisMultiplication(cpy[1], 1)^
-                galoisMultiplication(cpy[0], 3);
-}
-
-void
-AESEncryptDecrypt::mixColumnInv(cl_uchar *column)
-{
-    cl_uchar cpy[4];
-    for(cl_uint i=0; i < 4; ++i)
-    {
-        cpy[i] = column[i];
-    }
-    column[0] = galoisMultiplication(cpy[0], 14 )^
-                galoisMultiplication(cpy[3], 9 )^
-                galoisMultiplication(cpy[2], 13)^
-                galoisMultiplication(cpy[1], 11);
-    
-    column[1] = galoisMultiplication(cpy[1], 14 )^
-                galoisMultiplication(cpy[0], 9 )^
-                galoisMultiplication(cpy[3], 13)^
-                galoisMultiplication(cpy[2], 11);
-    
-    column[2] = galoisMultiplication(cpy[2], 14 )^
-                galoisMultiplication(cpy[1], 9 )^
-                galoisMultiplication(cpy[0], 13)^
-                galoisMultiplication(cpy[3], 11);
-    
-    column[3] = galoisMultiplication(cpy[3], 14 )^
-                galoisMultiplication(cpy[2], 9 )^
-                galoisMultiplication(cpy[1], 13)^
-                galoisMultiplication(cpy[0], 11);
-}
-
-void
-AESEncryptDecrypt::mixColumns(cl_uchar * state, cl_bool inverse)
-{
-    cl_uchar column[4];
-    for(cl_uint i=0; i < 4; ++i)
-    {
-        for(cl_uint j=0; j < 4; ++j)
-        {
-            column[j] = state[j*4 + i];
-        }
-        
-        if(inverse)
-        {
-            mixColumnInv(column);
-        }
-        else
-        {
-            mixColumn(column);
-        }
-       
-         for(cl_uint j=0; j < 4; ++j)
-        {
-            state[j*4 + i] = column[j];
-        }
-    }
-}
-
-void
-AESEncryptDecrypt::subBytes(cl_uchar * state, cl_bool inverse)
-{
-    for(cl_uint i=0; i < keySize; ++i)
-    {
-        state[i] = inverse ? getSBoxInvert(state[i]): getSBoxValue(state[i]);
-    }
-}
-
-void
-AESEncryptDecrypt::shiftRow(cl_uchar *state, cl_uchar nbr)
-{
-    for(cl_uint i=0; i < nbr; ++i)
-    {
-        cl_uchar tmp = state[0];
-        for(cl_uint j = 0; j < 3; ++j)
-        {
-            state[j] = state[j+1];
-        }
-        state[3] = tmp;
-    }
-}
-
-void
-AESEncryptDecrypt::shiftRowInv(cl_uchar *state, cl_uchar nbr)
-{
-    for(cl_uint i=0; i < nbr; ++i)
-    {
-        cl_uchar tmp = state[3];
-        for(cl_uint j = 3; j > 0; --j)
-        {
-            state[j] = state[j-1];
-        }
-        state[0] = tmp;
-    }
-}
-
-void
-AESEncryptDecrypt::shiftRows(cl_uchar * state, cl_bool inverse)
-{
-    for(cl_uint i=0; i < 4; ++i)
-    {
-        if(inverse)
-            shiftRowInv(state + i*4, i);
-        else
-            shiftRow(state + i*4, i);
-    }
-}
-
-void
-AESEncryptDecrypt::addRoundKey(cl_uchar * state, cl_uchar * rKey)
-{	
-    for(cl_uint i=0; i < keySize; ++i)
-    {	
-        state[i] = state[i] ^ rKey[i];
-    }
-
-}
-
-void
-AESEncryptDecrypt::createRoundKey(cl_uchar * eKey, cl_uchar * rKey)
-{
-    for(cl_uint i=0; i < 4; ++i)
-        for(cl_uint j=0; j < 4; ++j)
-        {
-            rKey[i+ j*4] = eKey[i*4 + j];
-        }
-}
-
-void
-AESEncryptDecrypt::aesRound(cl_uchar * state, cl_uchar * rKey)
-{
-    subBytes(state, decrypt);
-    shiftRows(state, decrypt);
-    mixColumns(state, decrypt);
-    addRoundKey(state, rKey);
-}
-
-void
-AESEncryptDecrypt::aesMain(cl_uchar * state, cl_uchar * rKey, cl_uint rounds)
-{
-    addRoundKey(state, rKey);
-
-    for(cl_uint i=1; i < rounds; ++i)
-    {
-        aesRound(state, rKey + keySize*i);
-    }
-
-    subBytes(state, decrypt);
-    shiftRows(state, decrypt);
-    addRoundKey(state, rKey + keySize*rounds);
-}
-
-void
-AESEncryptDecrypt::aesRoundInv(cl_uchar * state, cl_uchar * rKey)
-{
-    shiftRows(state, decrypt);
-    subBytes(state, decrypt);
-    addRoundKey(state, rKey);
-    mixColumns(state, decrypt);
-}
-
-void
-AESEncryptDecrypt::aesMainInv(cl_uchar * state, cl_uchar * rKey, cl_uint rounds)
-{
-    addRoundKey(state, rKey + keySize * rounds);
-    for(cl_uint i=rounds-1; i > 0; --i)
-    {
-        aesRoundInv(state, rKey + keySize*i);
-    } 
-    shiftRows(state, decrypt);
-    subBytes(state, decrypt);
-    addRoundKey(state, rKey);
-}
-
-/**
- *
- *
- */
-void 
-AESEncryptDecrypt::AESEncryptDecryptCPUReference(cl_uchar * output       ,
-                                                 cl_uchar * input        ,
-                                                 cl_uchar * rKey         ,
-                                                 cl_uint explandedKeySize,
-                                                 cl_uint width           ,
-                                                 cl_uint height          ,
-                                                 cl_bool inverse         )
-{
-    cl_uchar block[16];
-   
-    for(cl_uint blocky = 0; blocky < height/4; ++blocky)
-        for(cl_uint blockx= 0; blockx < width/4; ++blockx)
-        { 
-            for(cl_uint i=0; i < 4; ++i)
-            {
-                for(cl_uint j=0; j < 4; ++j)
-                {
-                    cl_uint x = blockx * 4 + j;
-                    cl_uint y = blocky * 4 + i;
-                    cl_uint index = y * width + x;
-                    block[i * 4 + j] = input[index];
-                }
-            }
-
-            if(inverse)
-                aesMainInv(block, rKey, rounds);
-            else
-                aesMain(block, rKey, rounds);
-            
-            for(cl_uint i=0; i <4 ; ++i)
-            {
-                for(cl_uint j=0; j <4; ++j)
-                {
-                    cl_uint x = blockx * 4 + j;
-                    cl_uint y = blocky * 4 + i;
-                    cl_uint index = y * width + x;
-                    output[index] =  block[i * 4 + j];
-                } 
-            }
-        }
-}
-
-
-int 
+	int 
 AESEncryptDecrypt::initialize()
 {
-   // Call base class Initialize to get default configuration
-   if(!this->SDKSample::initialize())
-      return SDK_FAILURE;
+	// Call base class Initialize to get default configuration
+    if(!this->SDKSample::initialize())
+        return SDK_FAILURE;
 
-   streamsdk::Option* ifilename_opt = new streamsdk::Option;
-   if(!ifilename_opt)
-   {
-      sampleCommon->error("Memory allocation error.\n");
-      return SDK_FAILURE;
-   }
-   ifilename_opt->_sVersion = "x";
-   ifilename_opt->_lVersion = "input";
-   ifilename_opt->_description = "Image as Input";
-   ifilename_opt->_type = streamsdk::CA_ARG_STRING;
-   ifilename_opt->_value = &inFilename;
-   sampleArgs->AddOption(ifilename_opt);
-
-   delete ifilename_opt;
-
-   ////////////////
-   streamsdk::Option* ofilename_opt = new streamsdk::Option;
-   if(!ofilename_opt)
-   {
-      sampleCommon->error("Memory allocation error.\n");
-      return SDK_FAILURE;
-   }
-   ofilename_opt->_sVersion = "y";
-   ofilename_opt->_lVersion = "output";
-   ofilename_opt->_description = "Image as Ouput";
-   ofilename_opt->_type = streamsdk::CA_ARG_STRING;
-   ofilename_opt->_value = &outFilename;
-   sampleArgs->AddOption(ofilename_opt);
-
-   delete ofilename_opt;
+    streamsdk::Option* ifilename_opt = new streamsdk::Option;
+    if(!ifilename_opt)
+    {
+        sampleCommon->error("Memory allocation error.\n");
+        return SDK_FAILURE;
+    }
 
     ////////////////
     streamsdk::Option* decrypt_opt = new streamsdk::Option;
@@ -1714,19 +1290,6 @@ AESEncryptDecrypt::initialize()
 int 
 AESEncryptDecrypt::setup()
 {
-    std::string filePath = sampleCommon->getPath() + inFilename;
-    image.load(filePath.c_str());
-
-    width  = image.getWidth();
-    height = image.getHeight();
-
-
-    /* check condition for the bitmap to be initialized */
-    if(width<0 || height <0)
-        return SDK_FAILURE;
-
-    pixels = image.getPixels(); 
-
     if(setupAESEncryptDecrypt()!=SDK_SUCCESS)
       return SDK_FAILURE;
     
@@ -1773,144 +1336,9 @@ AESEncryptDecrypt::run()
     sampleCommon->stopTimer(timer);
     totalKernelTime = (double)(sampleCommon->readTimer(timer)) / iterations;
     
-
-    //XXX: Write output to an output Image
-    convertGrayToPixels(output, pixels);
-    image.write(outFilename.c_str());
- 
-    if(!quiet) {
-        std::cout << "Output Filename : " << outFilename << std::endl;
-    }
-    
-    
     return SDK_SUCCESS;
 }
 
-int 
-AESEncryptDecrypt::verifyResults()
-{
-    if (verify && !decrypt)
-    {
-        verificationOutput = (cl_uchar *) malloc(width*height*sizeof(cl_uchar));
-        if(verificationOutput==NULL)   { 
-            sampleCommon->error("Failed to allocate host memory. (verificationOutput)");
-            return SDK_FAILURE;
-        }
-
-        /* 
-         * reference implementation
-         */
-        int refTimer = sampleCommon->createTimer();
-        sampleCommon->resetTimer(refTimer);
-        sampleCommon->startTimer(refTimer);
-        AESEncryptDecryptCPUReference(verificationOutput, input, roundKey, explandedKeySize, 
-                                                                width, height, decrypt);
-        sampleCommon->stopTimer(refTimer);
-        referenceKernelTime = sampleCommon->readTimer(refTimer);
-
-        /* compare the results and see if they match */
-        if(memcmp(output, verificationOutput, height*width*sizeof(cl_uchar)) == 0)
-        {
-            std::cout<<"Encryption Passed!\n" << std::endl;
-
-            if (cleanup() != SDK_SUCCESS)
-            {
-                return SDK_FAILURE;
-            }
-
-            printStats();
-
-            decrypt = true;
-            char tempOutFilename[256];
-            
-            std::string tempInputFilename = inFilename.substr(0, (inFilename.length() - 4));
-            sprintf(tempOutFilename, "%s_result.bmp", tempInputFilename.c_str());
-            inFilename.assign(outFilename);
-            outFilename.assign(tempOutFilename);
-
-            seed = 123;
-            input  = NULL;
-            output = NULL;
-            key    = NULL;
-            verificationOutput = NULL;
-            keySizeBits = 128;
-            rounds = 10;
-            setupTime = 0;
-            totalKernelTime = 0;
-            iterations = 1;
-
-            if (setup() != SDK_SUCCESS)
-            {
-                return SDK_FAILURE;
-            }
-
-            if (run()!=SDK_SUCCESS)
-            {
-                return SDK_FAILURE;
-            }
-
-            if (verifyResults() != SDK_SUCCESS)
-            {
-                return SDK_FAILURE;
-            }
-            
-            return SDK_SUCCESS;
-        }
-        else
-        {  
-            std::cout<<"Encryption Failed\n" << std::endl;
-            return SDK_FAILURE;
-        }
-    }
-    else if(verify && decrypt)
-    {
-        verificationOutput = (cl_uchar *) malloc(width*height*sizeof(cl_uchar));
-        if(verificationOutput==NULL)   { 
-            sampleCommon->error("Failed to allocate host memory. (verificationOutput)");
-            return SDK_FAILURE;
-        }
-
-        /* 
-         * reference implementation
-         */
-        int refTimer = sampleCommon->createTimer();
-        sampleCommon->resetTimer(refTimer);
-        sampleCommon->startTimer(refTimer);
-        AESEncryptDecryptCPUReference(verificationOutput, input, roundKey, explandedKeySize, 
-                                                                width, height, decrypt);
-        sampleCommon->stopTimer(refTimer);
-        referenceKernelTime = sampleCommon->readTimer(refTimer);
-
-        /* compare the results and see if they match */
-        if(memcmp(output, verificationOutput, height*width*sizeof(cl_uchar)) == 0)
-        {
-            std::cout<<"Decryption Passed!\n" << std::endl;
-            return SDK_SUCCESS;
-        }
-        else
-        {  
-            std::cout<<"Decryption Failed\n" << std::endl;
-            return SDK_FAILURE;
-        }
-    }
-
-    return SDK_SUCCESS;
-}
-
-void AESEncryptDecrypt::printStats()
-{
-    std::string strArray[4] = {"Width", "Height", "Time(sec)", "[Transfer+Kernel]Time(sec)"};
-    std::string stats[4];
-
-    totalTime = setupTime + totalKernelTime;
-    
-    stats[0] = sampleCommon->toString(width    , std::dec);
-    stats[1] = sampleCommon->toString(height   , std::dec);
-    stats[2] = sampleCommon->toString(totalTime, std::dec);
-    stats[3] = sampleCommon->toString(totalKernelTime, std::dec);
-
-    this->SDKSample::printStats(strArray, stats, 4);
-}
 
 int AESEncryptDecrypt::cleanup()
 {
@@ -1945,21 +1373,21 @@ int AESEncryptDecrypt::cleanup()
       "clReleaseMemObject failed."))
       return SDK_FAILURE;
 
-   status = clReleaseMemObject(rKeyBuffer);
+   status = clReleaseMemObject(keyBuffer);
    if(!sampleCommon->checkVal(
       status,
       CL_SUCCESS,
       "clReleaseMemObject failed."))
       return SDK_FAILURE;
 
-   status = clReleaseMemObject(sBoxBuffer);
+   status = clReleaseMemObject(ivsBuffer);
    if(!sampleCommon->checkVal(
       status,
       CL_SUCCESS,
       "clReleaseMemObject failed."))
       return SDK_FAILURE;
 
-   status = clReleaseMemObject(rsBoxBuffer);
+   status = clReleaseMemObject(pktOffsetBuffer);
    if(!sampleCommon->checkVal(
       status,
       CL_SUCCESS,
@@ -1984,20 +1412,17 @@ int AESEncryptDecrypt::cleanup()
     if(input) 
         free(input);
     
-    if(key)
-        free(key);
+    if(keys)
+        free(keys);
     
-    if(expandedKey)
-        free(expandedKey);
+    if(pkt_offset)
+        free(pkt_offset);
     
-    if(roundKey)
-        free(roundKey);
+    if(ivs)
+        free(ivs);
 
     if(output) 
         free(output);
-
-    if(verificationOutput) 
-        free(verificationOutput);
 
     if(devices)
         free(devices);
@@ -2006,6 +1431,12 @@ int AESEncryptDecrypt::cleanup()
         free(maxWorkItemSizes);
 
    return SDK_SUCCESS;
+}
+
+// some pure virtual function in SDK
+int AESEncryptDecrypt::verifyResults()
+{
+	return 0;
 }
 
 int 
@@ -2028,11 +1459,11 @@ main(int argc, char * argv[])
             return SDK_FAILURE;
         if(clAESEncryptDecrypt.run()!=SDK_SUCCESS)
             return SDK_FAILURE;
-        if(clAESEncryptDecrypt.verifyResults()!=SDK_SUCCESS)
-            return SDK_FAILURE;
+        //if(clAESEncryptDecrypt.verifyResults()!=SDK_SUCCESS)
+        //    return SDK_FAILURE;
         if(clAESEncryptDecrypt.cleanup()!=SDK_SUCCESS)
             return SDK_FAILURE;
-        clAESEncryptDecrypt.printStats();
+        //clAESEncryptDecrypt.printStats();
     }
 
     return SDK_SUCCESS;
