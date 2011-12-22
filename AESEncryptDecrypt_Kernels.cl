@@ -696,12 +696,12 @@ void PUTU32(__global uchar *ct, uint st)
 }
 
 void next_rk_128(uint *rk,
-		    const uint round,
-		    const uint Te0[],
-		    const uint Te1[],
-		    const uint Te2[],
-		    const uint Te3[],
-		    const uint rcon[])
+		 const uint round,
+		 __local const uint Te0[],
+		 __local const uint Te1[],
+		 __local const uint Te2[],
+		 __local const uint Te3[],
+		 __local const uint rcon[])
 {
 	uint temp;
 	temp = rk[3];
@@ -740,11 +740,11 @@ void
 AES_128_encrypt(__global uchar *in,
 		__global uchar *out,
 		__global uchar *key,
-		const uint Te0[],
-		const uint Te1[],
-		const uint Te2[],
-		const uint Te3[],
-		const uint rcon[])
+		__local const uint Te0[],
+		__local const uint Te1[],
+		__local const uint Te2[],
+		__local const uint Te3[],
+		__local const uint rcon[])
 {
 	uint s0, s1, s2, s3, t0, t1, t2, t3;
 
@@ -861,6 +861,7 @@ AES_128_encrypt(__global uchar *in,
 	PUTU32(out + 12, s3);
 }
 
+
 __kernel 
 void AES_cbc_128_encrypt(__global uchar * output  ,
                 __global uchar * input   ,
@@ -870,12 +871,11 @@ void AES_cbc_128_encrypt(__global uchar * output  ,
 		__global uchar * keys,
 		__global uchar * ivs)
 {
-	//return;
-	uint shared_Te0[256];
-	uint shared_Te1[256];
-	uint shared_Te2[256];
-	uint shared_Te3[256];
-	uint shared_Rcon[10];
+	__local uint shared_Te0[256];
+	__local uint shared_Te1[256];
+	__local uint shared_Te2[256];
+	__local uint shared_Te3[256];
+	__local uint shared_Rcon[10];
 
 	//calculating the local_id values
 	uint localIdx = get_local_id(0);
@@ -894,6 +894,8 @@ void AES_cbc_128_encrypt(__global uchar * output  ,
 	
 	uint idx = blockIdx * localSizex + localIdx; 
 
+	//if (idx == globalIdx)
+	//	return;
 
 	/* initialize T boxes */
 	for (uint i = 0 ; i * localSizex < 256 ; i++) {
@@ -916,6 +918,9 @@ void AES_cbc_128_encrypt(__global uchar * output  ,
 	if (idx >= num_flows)
 		return;
 	
+	/* make sure T boxes have been initialized. */
+	barrier(CLK_LOCAL_MEM_FENCE);
+
 	/* Locate data */
 	__global uchar *in = pkt_offset[idx] + input;
 	__global uchar *out = pkt_offset[idx] + output;
@@ -933,27 +938,28 @@ void AES_cbc_128_encrypt(__global uchar * output  ,
 		*((__global ulong *)out)       = *((__global ulong *)in)       ^ *((__global ulong *)iv);
 		*(((__global ulong *)out) + 1) = *(((__global ulong *)in) + 1) ^ *(((__global ulong *)iv) + 1);
 
-		AES_128_encrypt(out, out, key,
-				shared_Te0, shared_Te1, shared_Te2, shared_Te3, shared_Rcon);
+		AES_128_encrypt(out, out, key, shared_Te0, shared_Te1, shared_Te2, shared_Te3, shared_Rcon);
+
 		iv = out;
 		len -= AES_BLOCK_SIZE;
 		in  += AES_BLOCK_SIZE;
 		out += AES_BLOCK_SIZE;
 	}
 
-
 	if (len) {
 		for(uint n = 0; n < len; ++n)
 			out[n] = in[n] ^ iv[n];
 		for(uint n = len; n < AES_BLOCK_SIZE; ++n)
 			out[n] = iv[n];
-		AES_128_encrypt(out, out, key,
-				shared_Te0, shared_Te1, shared_Te2, shared_Te3, shared_Rcon);
+
+		//AES_128_encrypt(out, out, key, shared_Te0, shared_Te1, shared_Te2, shared_Te3, shared_Rcon);
+
 		iv = out;
 	}
 
 	*((__global uint4 *)ivec) = *((__global uint4 *)iv);
 
+	barrier(CLK_LOCAL_MEM_FENCE);
 	return;
 }
 

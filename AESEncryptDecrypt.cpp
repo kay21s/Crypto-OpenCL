@@ -506,15 +506,20 @@ AESEncryptDecrypt::setupCL(void)
     if(deviceType.compare("cpu") == 0)
     {
         dType = CL_DEVICE_TYPE_CPU;
+	std::cout << "Using CPU to run!" <<std::endl;
     }
     else //deviceType = "gpu" 
     {
-        dType = CL_DEVICE_TYPE_GPU;
         if(isThereGPU() == false)
         {
             std::cout << "GPU not found. Falling back to CPU device" << std::endl;
             dType = CL_DEVICE_TYPE_CPU;
         }
+	else
+	{
+            std::cout << "GPU found. Utilizing..." << std::endl;
+            dType = CL_DEVICE_TYPE_GPU;
+	}
     }
 
     /*
