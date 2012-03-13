@@ -13,6 +13,10 @@
 #include <SDKBitMap.hpp>
 
 using namespace streamsdk;
+
+#define NUM_FLOWS 8192
+#define FLOW_LEN 64
+#define EORD true
 /**
  * AESEncryptDecrypt 
  * Class implements OpenCL AESEncryptDecrypt sample
@@ -20,6 +24,7 @@ using namespace streamsdk;
  */
 
 #define AES_IV_SIZE 16
+#define AES_BLOCK_SIZE 16
 
 namespace AES
 {
@@ -40,6 +45,7 @@ namespace AES
         cl_mem       inputBuffer;        /**< CL memory input buffer */
         cl_mem       outputBuffer;       /**< CL memory output buffer */
         cl_mem       pktOffsetBuffer; 
+		cl_mem       pktIndexBuffer; /* For networking decryption*/
         cl_mem       keyBuffer;
         cl_mem       ivsBuffer;
 		
@@ -64,6 +70,9 @@ namespace AES
         cl_uint 	num_flows;	/* Number of flows for processing */
         cl_uint		flow_len;	/* The length of each flow, 16KB maximum */
 
+		cl_uint	    block_count; /* for network processing decryption, how many 16byte blocks */
+		cl_uint     *pkt_index; /* for network processing decryption, marking which packet this block belongs to*/
+
 
         public:
         /** 
@@ -79,15 +88,16 @@ namespace AES
                 keys    = NULL;
                 ivs    = NULL;
                 pkt_offset = NULL;
+				pkt_index = NULL;
                 verificationOutput = NULL;
-                decrypt = false;
+                decrypt = EORD;
                 keySizeBits = 128;
                 rounds = 10;
                 setupTime = 0;
                 totalKernelTime = 0;
-                iterations = 1;
-				num_flows = 1024;
-				flow_len = 1536;
+                iterations = 5;
+				num_flows = NUM_FLOWS; //max is 16384 for global threads?
+				flow_len = FLOW_LEN;
             }
     
         /** 
@@ -103,15 +113,16 @@ namespace AES
                 keys    = NULL;
                 ivs    = NULL;
                 pkt_offset = NULL;
+				pkt_index = NULL;
                 verificationOutput = NULL;
-                decrypt = false;
+                decrypt = EORD;
                 keySizeBits = 128;
                 rounds = 10;
                 setupTime = 0;
                 totalKernelTime = 0;
-                iterations = 1;
-				num_flows = 1024;
-				flow_len = 1536;
+                iterations = 5;
+				num_flows = NUM_FLOWS;
+				flow_len = FLOW_LEN;
             }
     
 		/* Generate Input Data */

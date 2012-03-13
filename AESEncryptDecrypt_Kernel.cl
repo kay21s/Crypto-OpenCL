@@ -8,6 +8,7 @@
 *****************************************************/
 
 #define AES_BLOCK_SIZE 16
+#pragma OPENCL EXTENSION cl_amd_printf : enable
 
 __constant uint rcon[10] = {
 	0x01000000, 0x02000000, 0x04000000, 0x08000000,
@@ -812,18 +813,18 @@ void AES_cbc_128_encrypt_new(__global uchar * output  ,
 	barrier(CLK_LOCAL_MEM_FENCE);
 
 	/* Locate data */
-	__global uchar *in = pkt_offset[idx] + input;
-	__global uchar *out = pkt_offset[idx] + output;
+	__global uchar *in = &input[pkt_offset[idx]];
+	__global uchar *out = &output[pkt_offset[idx]];
 	__global uchar *key = idx * 16 + keys;
 	/* Each thread has a block to place the initial block and 
 		intermediate data */ 
 	__global uchar *ivec = idx * 16 + ivs;
 
 	/* Encrypt using cbc mode */
-	int len = pkt_offset[idx + 1] - pkt_offset[idx];
+	uint len = pkt_offset[idx + 1] - pkt_offset[idx];
 	__global uchar *iv = ivec;
 
-	while (len >= 16 && len <= 2048) { // ??? what the fuck!!!!!!!!!!!!!!!!!!!!!!!!!
+	while (len > 0) {
 		// ulong is 64 bits in OpenCL
 		*((__global ulong *)out)       = *((__global ulong *)in)       ^ *((__global ulong *)iv);
 		*(((__global ulong *)out) + 1) = *(((__global ulong *)in) + 1) ^ *(((__global ulong *)iv) + 1);
@@ -831,15 +832,12 @@ void AES_cbc_128_encrypt_new(__global uchar * output  ,
 		AES_128_encrypt(out, out, key, shared_Te0, shared_Te1, shared_Te2, shared_Te3, shared_Rcon);
 
 		iv = out;
-//		len -= 16;
 		in  += 16;
 		out += 16;
 		len -= 16;
-//		if (len == 0)
-//			break;
 	}
 
-/*	if (len) {
+	if (len) {
 		for(uint n = 0; n < len; ++n)
 			out[n] = in[n] ^ iv[n];
 		for(uint n = len; n < 16; ++n)
@@ -849,14 +847,14 @@ void AES_cbc_128_encrypt_new(__global uchar * output  ,
 
 		iv = out;
 	}
-*/
+
 	*((__global uint4 *)ivec) = *((__global uint4 *)iv);
 
 	barrier(CLK_LOCAL_MEM_FENCE);
 	return;
 }
 
-#if 0
+#if 1
 
 void next_rk_128_decrypt(uint *rk,
 		const uint round,
@@ -1185,7 +1183,7 @@ void AES_cbc_128_decrypt(__global uchar *in_all,
 					  __global uchar *keys,
 					  __global uchar *ivs,
 					  __constant uint *pkt_index,
-					  ulong  block_count
+					  uint  block_count
 					  )
 {
 	__local uint shared_Td0[256];
@@ -1211,7 +1209,6 @@ void AES_cbc_128_decrypt(__global uchar *in_all,
 	uint localIdx = get_local_id(0);
 
 	uint idx =  localSizex * blockIdx + localIdx; 
-
 
 	/* initialize T boxes */
 	for (uint i = 0 ; i * localSizex < 256 ; i++) {
@@ -1247,10 +1244,10 @@ void AES_cbc_128_decrypt(__global uchar *in_all,
 	uint packet_index = pkt_index[idx];
 
 	uint rk[4];
-	rk[0] = *((uint *)(keys + 16 * packet_index));
-	rk[1] = *((uint *)(keys + 16 * packet_index + 4));
-	rk[2] = *((uint *)(keys + 16 * packet_index + 8));
-	rk[3] = *((uint *)(keys + 16 * packet_index + 12));
+	rk[0] = *((__global uint *)(keys + 16 * packet_index));
+	rk[1] = *((__global uint *)(keys + 16 * packet_index + 4));
+	rk[2] = *((__global uint *)(keys + 16 * packet_index + 8));
+	rk[3] = *((__global uint *)(keys + 16 * packet_index + 12));
 
 	__global uchar *ivec = packet_index * AES_BLOCK_SIZE + ivs;
 

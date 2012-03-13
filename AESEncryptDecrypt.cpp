@@ -6,7 +6,7 @@ void AESEncryptDecrypt::write_pkt_offset(cl_uint *pkt_offset)
 {
 	cl_uint i = 0;
 	cl_uint offset = 0;
-	for (i = 0; i < num_flows; i ++) {
+	for (i = 0; i <= num_flows; i ++) {
 		pkt_offset[i] = offset;
 		offset += flow_len;
 	}
@@ -21,6 +21,7 @@ void AESEncryptDecrypt::set_random(cl_uchar *input, int len)
 
 int AESEncryptDecrypt::setupAESEncryptDecrypt()
 {
+    cl_uint i, j;
 
     // ------- Input Buffer------- 
     input = (cl_uchar *)malloc(num_flows * flow_len * sizeof(cl_uchar));
@@ -33,13 +34,24 @@ int AESEncryptDecrypt::setupAESEncryptDecrypt()
     output = (cl_uchar *)malloc(num_flows * flow_len * sizeof(cl_uchar));
 	CHECK_ALLOCATION(output, "Failed to allocate host memory. (output)");
 	
-	// ------- Pkt Offset Buffer------- 
-    pkt_offset = (cl_uint *)malloc(num_flows * sizeof(cl_uint));
-	CHECK_ALLOCATION(output, "Failed to allocate host memory. (pkt_offset)");
+	if (decrypt) {
+	    block_count = (num_flows * flow_len) / AES_BLOCK_SIZE;
+	    pkt_index = (cl_uint *)malloc(block_count * sizeof(cl_uint));
+
+		// Init packet index
+		for (i = 0; i < num_flows; i ++) {
+			for (j = 0; j < flow_len / AES_BLOCK_SIZE; j ++) {
+			    pkt_index[i * j] = i;
+			}
+		}
+	} else {
+    	// ------- Pkt Offset Buffer------- 
+        pkt_offset = (cl_uint *)malloc((num_flows + 1) * sizeof(cl_uint));
+	    CHECK_ALLOCATION(output, "Failed to allocate host memory. (pkt_offset)");
 	
-	// init packet offset array
-    write_pkt_offset(pkt_offset);
-	
+	    // init packet offset array
+        write_pkt_offset(pkt_offset);
+	}
 	// ------- Key Buffer------- 
     /* 1 Byte = 8 bits, 128bits => 16bytes */
     keySize = keySizeBits/8;
@@ -105,7 +117,7 @@ AESEncryptDecrypt::setupEncryption(void)
     pktOffsetBuffer = clCreateBuffer(
                     context, 
                     CL_MEM_READ_ONLY | CL_MEM_USE_HOST_PTR,
-                    sizeof(cl_uint) * num_flows,
+                    sizeof(cl_uint) * (num_flows + 1),
                     pkt_offset,
                     &status);
     CHECK_OPENCL_ERROR(status, "clCreateBuffer failed. (pktOffsetBuffer)");
@@ -154,13 +166,13 @@ AESEncryptDecrypt::setupDecryption(void)
                     &status);
     CHECK_OPENCL_ERROR(status, "clCreateBuffer failed. (outputBuffer)");
 
-    pktOffsetBuffer = clCreateBuffer(
+    pktIndexBuffer = clCreateBuffer(
                     context, 
                     CL_MEM_READ_ONLY | CL_MEM_USE_HOST_PTR,
-                    sizeof(cl_uint) * num_flows,
-                    pkt_offset,
+                    sizeof(cl_uint) * block_count,
+                    pkt_index,
                     &status);
-    CHECK_OPENCL_ERROR(status, "clCreateBuffer failed. (pktOffsetBuffer)");
+    CHECK_OPENCL_ERROR(status, "clCreateBuffer failed. (pktIndexBuffer)");
 
     keyBuffer = clCreateBuffer(
                     context, 
@@ -237,6 +249,9 @@ AESEncryptDecrypt::setupCL(void)
     status = sampleCommon->getDevices(context, &devices, deviceId, isDeviceIdEnabled());
     CHECK_ERROR(status, SDK_SUCCESS, "sampleCommon::getDevices() failed");
 
+	// Select the device!!!!!!!!
+	deviceId = 1;
+
     {
         // The block is to move the declaration of prop closer to its use
         cl_command_queue_properties prop = 0;
@@ -293,12 +308,17 @@ AESEncryptDecrypt::runCLKernels(void)
 {
     cl_int   status;
     cl_int eventStatus = CL_QUEUED;
+	size_t globalThreads;
     
 	// !!!???
-	size_t globalThreads = num_flows;
+	if (decrypt) {
+	    globalThreads = block_count;
+	} else {
+	    globalThreads = num_flows;
+	}
 	size_t localThreads = 256;
 
-	std::cout << "Dimension : " << globalThreads << " " << localThreads << std::endl;
+//	std::cout << "Dimension : " << globalThreads << " " << localThreads << std::endl;
 
     status = kernelInfo.setKernelWorkGroupInfo(kernel, devices[deviceId]);
     CHECK_ERROR(status, SDK_SUCCESS, "KernelInfo.setKernelWorkGroupInfo() failed");
@@ -321,9 +341,9 @@ AESEncryptDecrypt::runCLKernels(void)
     }
 	
  
-    std::cout << "kernelWorkGroupSize : " << kernelInfo.kernelWorkGroupSize
-        << "maxWorkItemSizes[0]" << deviceInfo.maxWorkItemSizes[0]
-        << "maxWorkGroupSize" << deviceInfo.maxWorkGroupSize << std::endl;
+//    std::cout << "kernelWorkGroupSize : " << kernelInfo.kernelWorkGroupSize
+//        << "maxWorkItemSizes[0]" << deviceInfo.maxWorkItemSizes[0]
+//        << "maxWorkGroupSize" << deviceInfo.maxWorkGroupSize << std::endl;
 	
     cl_event writeEvt;
     status = clEnqueueWriteBuffer(
@@ -345,7 +365,24 @@ AESEncryptDecrypt::runCLKernels(void)
     CHECK_ERROR(status, SDK_SUCCESS, "WaitForEventAndRelease(writeEvt) Failed");
 
 	if (decrypt) {
+	    // Set appropriate arguments to the kernel
+        status = clSetKernelArg(kernel, 0, sizeof(cl_mem), (void *)&inputBuffer);
+        CHECK_OPENCL_ERROR(status, "clSetKernelArg failed. (inputBuffer)");
+
+        status = clSetKernelArg(kernel, 1, sizeof(cl_mem), (void *)&outputBuffer);
+        CHECK_OPENCL_ERROR(status, "clSetKernelArg failed. (outputBuffer)");
+
+        status = clSetKernelArg(kernel, 2, sizeof(cl_mem), (void *)&keyBuffer);
+        CHECK_OPENCL_ERROR(status, "clSetKernelArg failed. (keyBuffer)");
+
+        status = clSetKernelArg(kernel, 3, sizeof(cl_mem), (void *)&ivsBuffer);
+        CHECK_OPENCL_ERROR(status, "clSetKernelArg failed. (ivsBuffer)");
+
+        status = clSetKernelArg(kernel, 4, sizeof(cl_mem), (void *)&pktIndexBuffer);
+        CHECK_OPENCL_ERROR(status, "clSetKernelArg failed. (pktIndexBuffer)");
 	
+	    status = clSetKernelArg(kernel, 5, sizeof(cl_uint), (void *)&block_count);
+        CHECK_OPENCL_ERROR(status, "clSetKernelArg failed. (block_count)");
 	} else {
         // Set appropriate arguments to the kernel
         status = clSetKernelArg(kernel, 0, sizeof(cl_mem), (void *)&outputBuffer);
@@ -387,6 +424,8 @@ AESEncryptDecrypt::runCLKernels(void)
             NULL,
             &ndrEvt);
     CHECK_OPENCL_ERROR(status, "clEnqueueNDRangeKernel failed.");
+
+//	std::cout << "After Kernel Running ---------------------" << std::endl;
 
     status = clFlush(commandQueue);
     CHECK_OPENCL_ERROR(status, "clFlush failed.");
@@ -482,13 +521,13 @@ AESEncryptDecrypt::run()
             return SDK_FAILURE;
     }
 
+	std::cout << "Executing kernel for " << iterations << 
+        " iterations" << std::endl;
+    std::cout << "-------------------------------------------" << std::endl;
+
     int timer = sampleCommon->createTimer();
     sampleCommon->resetTimer(timer);
     sampleCommon->startTimer(timer);
-
-    std::cout << "Executing kernel for " << iterations << 
-        " iterations" << std::endl;
-    std::cout << "-------------------------------------------" << std::endl;
 
     for(int i = 0; i < iterations; i++)
     {
@@ -511,15 +550,16 @@ AESEncryptDecrypt::verifyResults()
 
 void AESEncryptDecrypt::printStats()
 {
-    std::string strArray[4] = {"Width", "Height", "Time(sec)", "[Transfer+Kernel]Time(sec)"};
-    std::string stats[4];
+	totalTime = setupTime + totalKernelTime;
+	cl_ulong bits = 8 * num_flows * flow_len;
 
-    totalTime = setupTime + totalKernelTime;
-    
-    stats[2] = sampleCommon->toString(totalTime, std::dec);
-    stats[3] = sampleCommon->toString(totalKernelTime, std::dec);
+	std::cout << "num_flows : " << num_flows << " flow_len : " << flow_len << std::endl;
 
-    this->SDKSample::printStats(strArray, stats, 4);
+	std::cout << "setupTime : " << setupTime << std::endl;
+	std::cout << "totalKernelTime : " << totalKernelTime << " " 
+			<< bits/(1000000000 * totalKernelTime) << std::endl; 
+	std::cout << "totalTime : " << totalTime << " "
+			<< bits/(1000000000 * totalTime) << std::endl;
 }
 
 int AESEncryptDecrypt::cleanup()
@@ -545,8 +585,13 @@ int AESEncryptDecrypt::cleanup()
     status = clReleaseMemObject(ivsBuffer);
     CHECK_OPENCL_ERROR(status, "clReleaseMemObject failed.");
 
-    status = clReleaseMemObject(pktOffsetBuffer);
-    CHECK_OPENCL_ERROR(status, "clReleaseMemObject failed.");
+	if (decrypt) {
+	    status = clReleaseMemObject(pktIndexBuffer);
+        CHECK_OPENCL_ERROR(status, "clReleaseMemObject failed.");
+	} else {
+        status = clReleaseMemObject(pktOffsetBuffer);
+        CHECK_OPENCL_ERROR(status, "clReleaseMemObject failed.");
+    }
 
     status = clReleaseCommandQueue(commandQueue);
     CHECK_OPENCL_ERROR(status, "clReleaseCommandQueue failed.");
@@ -559,7 +604,11 @@ int AESEncryptDecrypt::cleanup()
     
     FREE(keys);
     
-    FREE(pkt_offset);
+	if (decrypt) {
+	    FREE(pkt_index);
+	} else {
+        FREE(pkt_offset);
+	}
     
     FREE(ivs);
 
@@ -595,6 +644,6 @@ main(int argc, char * argv[])
     //    return SDK_FAILURE;
     if(clAESEncryptDecrypt.cleanup() != SDK_SUCCESS)
         return SDK_FAILURE;
-    //clAESEncryptDecrypt.printStats();
+    clAESEncryptDecrypt.printStats();
     return SDK_SUCCESS;
 }
