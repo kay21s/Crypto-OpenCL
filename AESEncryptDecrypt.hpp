@@ -12,11 +12,15 @@
 #include <SDKFile.hpp>
 #include <SDKBitMap.hpp>
 
+#include "StreamGenerator.hpp"
+
 using namespace streamsdk;
 
-#define NUM_FLOWS 8192
-#define FLOW_LEN 64
-#define EORD true
+#define NUM_FLOWS 1024
+#define FLOW_LEN 256
+#define ITERATION 3
+#define EORD false  // false->encryption, true->decryption
+#define DEVICE_ID 0 //0->integrated GPU, 1->discrete GPU
 /**
  * AESEncryptDecrypt 
  * Class implements OpenCL AESEncryptDecrypt sample
@@ -62,7 +66,7 @@ namespace AES
 
         cl_ulong availableLocalMemory; 
         cl_ulong    neededLocalMemory;
-        int                iterations;    /**< Number of iterations for kernel execution */
+        int         iterations;    /**< Number of iterations for kernel execution */
         streamsdk::SDKDeviceInfo deviceInfo;						/**< Structure to store device information*/
 	    streamsdk::KernelWorkGroupInfo kernelInfo;			/**< Structure to store kernel related info */   
 
@@ -73,6 +77,9 @@ namespace AES
 		cl_uint	    block_count; /* for network processing decryption, how many 16byte blocks */
 		cl_uint     *pkt_index; /* for network processing decryption, marking which packet this block belongs to*/
 
+		StreamGenerator streamGenerator;
+		unsigned int buffer_size;
+		unsigned int stream_num;
 
         public:
         /** 
@@ -95,7 +102,7 @@ namespace AES
                 rounds = 10;
                 setupTime = 0;
                 totalKernelTime = 0;
-                iterations = 5;
+                iterations = ITERATION;
 				num_flows = NUM_FLOWS; //max is 16384 for global threads?
 				flow_len = FLOW_LEN;
             }
@@ -120,7 +127,7 @@ namespace AES
                 rounds = 10;
                 setupTime = 0;
                 totalKernelTime = 0;
-                iterations = 5;
+                iterations = ITERATION;
 				num_flows = NUM_FLOWS;
 				flow_len = FLOW_LEN;
             }
@@ -128,7 +135,6 @@ namespace AES
 		/* Generate Input Data */
         void write_pkt_offset(cl_uint *pkt_offset);
         void set_random(cl_uchar *input, int len);
-
 
 		int setupDecryption();
 		int setupEncryption();
