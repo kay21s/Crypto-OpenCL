@@ -64,6 +64,8 @@ CPerfCounter::Reset(void)
 double
 CPerfCounter::GetTotalTime(void)
 {
+	//!! ns * 1000 = ms, we use ms as the unit
+
 #if _WIN32
     return (double)(_clocks * 1000) / (double) _freq;
 #else

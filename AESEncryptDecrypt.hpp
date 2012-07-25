@@ -13,14 +13,27 @@
 #include <SDKBitMap.hpp>
 
 #include "StreamGenerator.hpp"
+#include "Log.h"
 
 using namespace streamsdk;
 
 #define NUM_FLOWS 1024
 #define FLOW_LEN 256
-#define ITERATION 3
+#define ITERATION 10
 #define EORD false  // false->encryption, true->decryption
 #define DEVICE_ID 0 //0->integrated GPU, 1->discrete GPU
+
+#define STREAM_NUM 2048
+#define INTERVAL 50 //ms
+
+#define AVG_DEADLINE 120 //ms
+#define VAR_DEADLINE 5
+#define AVG_RATE	50000
+#define VAR_RATE	10
+#define AVG_PERIOD	120
+#define VAR_PERIOD	5
+
+
 /**
  * AESEncryptDecrypt 
  * Class implements OpenCL AESEncryptDecrypt sample
@@ -80,6 +93,11 @@ namespace AES
 		StreamGenerator streamGenerator;
 		unsigned int buffer_size;
 		unsigned int stream_num;
+
+		bool noOverlap;      // Disallow memset/kernel overlap
+		int  numWavefronts;
+
+		TestLog *timeLog;
 
         public:
         /** 

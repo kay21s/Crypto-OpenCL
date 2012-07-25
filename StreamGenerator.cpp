@@ -67,6 +67,8 @@ void StreamGenerator::SetInterval(unsigned int time_interval)
 void StreamGenerator::InitStreams(unsigned int rate_avg, unsigned int rate_var, 
 	unsigned int dl_avg, unsigned int dl_var, unsigned int pd_avg, unsigned int pd_var)
 {
+	unsigned int res;
+
 	_rate_avg = rate_avg;
 	_rate_var = rate_var;
 
@@ -86,10 +88,13 @@ void StreamGenerator::InitStreams(unsigned int rate_avg, unsigned int rate_var,
 		_streams[i].setRate(getrand(_rate_avg, _rate_var));
 	}
 	for (unsigned int i = 0; i < _stream_num; i ++) {
-		_streams[i].setDeadline(getrand(_deadline_avg, _deadline_var));
+		// Currently, we make deadline = period
+		res = getrand(_deadline_avg, _deadline_var);
+		_streams[i].setDeadline(res);
+		_streams[i].setPeriod(res);
 	}
 	for (unsigned int i = 0; i < _stream_num; i ++) {
-		_streams[i].setPeriod(getrand(_period_avg, _period_var));
+		//_streams[i].setPeriod(getrand(_period_avg, _period_var));
 		_streams[i].setFrameSize();
 
 		_streams[i].setKey('a');
@@ -112,7 +117,7 @@ i64 StreamGenerator::GetStartTimestamp()
 	return _start;
 }
 
-void StreamGenerator::GetStreams(unsigned char *buffer, unsigned int buffer_size, 
+unsigned int StreamGenerator::GetStreams(unsigned char *buffer, unsigned int buffer_size, 
 			unsigned char *keyBuffer, unsigned char *ivBuffer,
 			unsigned int *stream_offset, unsigned int *stream_num)
 {
@@ -135,13 +140,14 @@ void StreamGenerator::GetStreams(unsigned char *buffer, unsigned int buffer_size
 		if (interval_frames == 0) {
 			//std::cout << "interval_frames == 0~~~~~" << std::endl;
 			//exit(0);
+			continue;
 		}
 		
 		// These frames belonging to the same stream are 
 		stream_offset[stream + 1] = stream_offset[stream] + interval_frames * _streams[i].getFrameSize();
 		if (stream_offset[stream + 1] > buffer_size) {
-			std::cout << "The buffer is too small~~~~~"<< stream_offset[stream + 1] 
-				<< buffer_size << std::endl;
+			std::cout << "The buffer is too small~~~~~"<< stream_offset[stream + 1] << "  " 
+				<< buffer_size << " stream num: " << stream << std::endl;
 			exit(0);
 		}
 		// set the frame content with random characters
@@ -168,7 +174,7 @@ void StreamGenerator::GetStreams(unsigned char *buffer, unsigned int buffer_size
 
 	} while(abs(elapsed_time - time_point) > 1);
 
-	return;
+	return stream_offset[stream];
 }
 
 unsigned int StreamGenerator::GetMaxBufferSize()
@@ -180,4 +186,31 @@ unsigned int StreamGenerator::GetMaxBufferSize()
 	}
 
 	return bytes;
+}
+
+unsigned int StreamGenerator::GetMinDeadline()
+{
+	unsigned int minDeadline = 10000;
+
+	for (unsigned int i = 0; i < _stream_num; i ++) {
+		if (minDeadline < _streams[i].getDeadline()) {
+			minDeadline = _streams[i].getDeadline();
+		}
+	}
+
+	return minDeadline;
+}
+
+bool StreamGenerator::CheckSchedulability()
+{
+	unsigned int minDeadline;
+	minDeadline = GetMinDeadline();
+
+	if (_interval <= minDeadline/2) {
+		return 1;
+	} else {
+		std::cout << "minDeadline : " << minDeadline
+			<< " interval : " << _interval << std::endl;
+		return 0;
+	}
 }

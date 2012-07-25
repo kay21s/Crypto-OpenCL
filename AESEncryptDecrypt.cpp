@@ -25,12 +25,18 @@ int AESEncryptDecrypt::setupAESEncryptDecrypt()
 {
 #if defined(DYNAMIC_STREAM)
 
-	// Set parameters for the stream set
-	streamGenerator.SetStreamNumber(1024);
-	streamGenerator.SetInterval(30);
-	streamGenerator.InitStreams(50000, 10, 50, 5, 30, 5);
+	// Initialie TimeLog
+	timeLog = new TestLog(ITERATION * 50);
+	CHECK_ALLOCATION(timeLog, "Failed to allocate host memory. (timeLog)");
 
-		/* 1 Byte = 8 bits, 128bits => 16bytes */
+	// Set parameters for the stream set
+	streamGenerator.SetStreamNumber(STREAM_NUM);
+	streamGenerator.SetInterval(INTERVAL);
+	streamGenerator.InitStreams(AVG_RATE, VAR_RATE, AVG_DEADLINE, 
+		VAR_DEADLINE, AVG_PERIOD, VAR_PERIOD);
+	// !!!!!! Set deadline = period
+
+	/* 1 Byte = 8 bits, 128bits => 16bytes */
 	keySize = keySizeBits/8;
   
 	/* due to unknown represenation of cl_uchar */ 
@@ -428,32 +434,49 @@ AESEncryptDecrypt::runCLKernels(void)
 #if defined(DYNAMIC_STREAM)
 
 	unsigned int this_stream_num;
+	unsigned int this_buffer_size;
+
 	cl_event writeEvt;
 	CPerfCounter t, counter;
 
-	streamGenerator.StartStreams();
-	counter.Reset();
-	counter.Start();
-
-	std::cout << "Stream num : " << stream_num 
-		<< ", Start time : " << streamGenerator.GetStartTimestamp() 
+	std::cout << "Stream num : " << stream_num
+		<< ", Start time : " << streamGenerator.GetStartTimestamp()
 		<< ", Interval : " << streamGenerator.GetInterval() << std::endl;
 
+	counter.Reset();
+	counter.Start();
+	streamGenerator.StartStreams();
+
 	for (int i = 0; i < iterations; i ++) {
+
+		timeLog->loopMarker();
+
 		t.Reset();
 		t.Start();
 
 		// Generate Stream Data
-		streamGenerator.GetStreams(input, buffer_size, 
+		this_buffer_size = streamGenerator.GetStreams(input, buffer_size, 
 			keys, ivs,
 			pkt_offset, &this_stream_num);
 
 		t.Stop();
 
-		std::cout << "The " << i << "th iteration," 
-			<< " Time of GetStreams is " << t.GetTotalTime() << "ms."
-			<< " Time after GetStreams is " << counter.GetElapsedTime() << "ms." << std::endl;
-		
+		timeLog->Msg( "\n%s\n", "---------------------------", 0);
+
+		timeLog->Timer(
+           "%s %f s\n", "Get Streams Time", 
+           t.GetTotalTime(), 
+           10,
+           1);
+
+		timeLog->Msg("%s %d ms\n", " Time after GetStreams is " , counter.GetElapsedTime());
+		timeLog->Msg("%s %d ms\n", " Time ought to be ", INTERVAL * (i + 1));
+		timeLog->Msg("%s %d streams\n", " This time we have ", this_stream_num);
+		timeLog->Msg("%s %d byte\n", " This buffer size is ", this_buffer_size);
+
+		if (this_stream_num < globalThreads)
+			continue;
+
 		t.Reset();
 		t.Start();
 
@@ -463,7 +486,7 @@ AESEncryptDecrypt::runCLKernels(void)
 				inputBuffer,
 				CL_FALSE,
 				0,
-				sizeof(cl_uchar) * buffer_size,
+				sizeof(cl_uchar) * this_buffer_size,
 				input,
 				0,
 				NULL,
@@ -475,7 +498,7 @@ AESEncryptDecrypt::runCLKernels(void)
 				pktOffsetBuffer,
 				CL_FALSE,
 				0,
-				sizeof(cl_uint) * (stream_num + 1),
+				sizeof(cl_uint) * (this_stream_num + 1),
 				pkt_offset,
 				0,
 				NULL,
@@ -487,7 +510,7 @@ AESEncryptDecrypt::runCLKernels(void)
 				keyBuffer,
 				CL_FALSE,
 				0,
-				keySize * stream_num,
+				keySize * this_stream_num,
 				keys,
 				0,
 				NULL,
@@ -497,14 +520,25 @@ AESEncryptDecrypt::runCLKernels(void)
 		status = clEnqueueWriteBuffer(
 				commandQueue,
 				ivsBuffer,
-				CL_FALSE,
+				CL_TRUE, // !!! Measure the Data transfer time, the last one BLOCKING. 
 				0,
-				AES_IV_SIZE * stream_num,
+				AES_IV_SIZE * this_stream_num,
 				ivs,
 				0,
 				NULL,
 				&writeEvt);
 		CHECK_OPENCL_ERROR(status, "clEnqueueWriteBuffer failed. (ivsBuffer)");
+
+		t.Stop();
+
+		timeLog->Timer(
+           "%s %f ms\n", "Input Data Transfer Time", 
+           t.GetTotalTime(), 
+           10,
+           1);
+
+		t.Reset();
+		t.Start();
 
 		// Set appropriate arguments to the kernel
 		status = clSetKernelArg(kernel, 0, sizeof(cl_mem), (void *)&outputBuffer);
@@ -528,6 +562,13 @@ AESEncryptDecrypt::runCLKernels(void)
 		status = clSetKernelArg(kernel, 6, sizeof(cl_mem), (void *)&ivsBuffer);
 		CHECK_OPENCL_ERROR(status, "clSetKernelArg failed. (ivsBuffer)");
 
+		/*
+		// Fix the globalThreads and localThreads
+		if (globalThreads < this_stream_num)
+			globalThreads = this_stream_num;
+		if (localThreads < this_stream_num)
+			localThreads = this_stream_num;
+		*/
 
 		//Enqueue a kernel run call.
 		cl_event ndrEvt;
@@ -551,6 +592,17 @@ AESEncryptDecrypt::runCLKernels(void)
 		status = sampleCommon->waitForEventAndRelease(&ndrEvt);
 		CHECK_ERROR(status, SDK_SUCCESS, "WaitForEventAndRelease(ndrEvt) Failed");
 
+		t.Stop();
+
+		timeLog->Timer(
+           "%s %f ms\n", "Execution Time", 
+           t.GetTotalTime(), 
+           10,
+           1);
+
+		t.Reset();
+		t.Start();
+
 		/* Enqueue the results to application pointer*/
 		cl_event readEvt;
 		status = clEnqueueReadBuffer(
@@ -558,7 +610,7 @@ AESEncryptDecrypt::runCLKernels(void)
 					outputBuffer,
 					CL_FALSE,
 					0,
-					sizeof(cl_uchar) * buffer_size,
+					sizeof(cl_uchar) * this_buffer_size,
 					output,
 					0,
 					NULL,
@@ -572,13 +624,20 @@ AESEncryptDecrypt::runCLKernels(void)
 		CHECK_ERROR(status, SDK_SUCCESS, "WaitForEventAndRelease(readEvt) Failed");
 
 		t.Stop();
-		std::cout << "The " << i << "th iteration," 
-			<< " End of loop, Time use is " << t.GetTotalTime() << "ms."
-			<< " Time after is " << counter.GetElapsedTime() << "ms." << std::endl;
+
+		timeLog->Timer(
+           "%s %f ms\n", "Output Data Time",
+           t.GetTotalTime(),
+           10,
+           1);
+
+		timeLog->Msg( "%s %dth iteration\n", "This is", i);
+		timeLog->Msg( "%s %d ms\n", "Time after is", counter.GetElapsedTime());
 
 	}
 
 	counter.Stop();
+
 	std::cout << "End of execution, now is " << counter.GetTotalTime() << std::endl;
 
 #else
@@ -811,6 +870,8 @@ void AESEncryptDecrypt::printStats()
 	totalTime = setupTime + totalKernelTime;
 	cl_ulong bits = 8 * num_flows * flow_len;
 
+	timeLog->printLog();
+
 	std::cout << "num_flows : " << num_flows << " flow_len : " << flow_len << std::endl;
 
 	std::cout << "setupTime : " << setupTime << std::endl;
@@ -876,6 +937,8 @@ int AESEncryptDecrypt::cleanup()
 
 	FREE(devices);
 
+	delete timeLog;
+
 	return SDK_SUCCESS;
 }
 
@@ -900,8 +963,9 @@ main(int argc, char * argv[])
 		return SDK_FAILURE;
 	//if(clAESEncryptDecrypt.verifyResults() != SDK_SUCCESS)
 	//    return SDK_FAILURE;
+	clAESEncryptDecrypt.printStats();
 	if(clAESEncryptDecrypt.cleanup() != SDK_SUCCESS)
 		return SDK_FAILURE;
-	clAESEncryptDecrypt.printStats();
+
 	return SDK_SUCCESS;
 }

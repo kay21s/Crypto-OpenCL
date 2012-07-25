@@ -77,11 +77,13 @@ public:
 		unsigned int, unsigned int, unsigned int, unsigned int);
 	void StartStreams();
 	i64 GetStartTimestamp();
-	void GetStreams(unsigned char *, unsigned int,
+	unsigned int GetStreams(unsigned char *, unsigned int,
 		unsigned char *, unsigned char *,
 		unsigned int *, unsigned int *);
 
 	unsigned int GetMaxBufferSize();
+	unsigned int GetMinDeadline();
+	bool CheckSchedulability();
 
 private:
 
