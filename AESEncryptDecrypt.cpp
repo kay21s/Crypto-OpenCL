@@ -1,8 +1,8 @@
 #include "AESEncryptDecrypt.hpp"
 
-using namespace AES;
+#if !defined(TRANSFER_OVERLAP)
 
-#define DYNAMIC_STREAM 1
+using namespace AES;
 
 void AESEncryptDecrypt::write_pkt_offset(cl_uint *pkt_offset)
 {
@@ -54,13 +54,13 @@ int AESEncryptDecrypt::setupAESEncryptDecrypt()
 	CHECK_ALLOCATION(output, "Failed to allocate host memory. (output)");
 
 	pkt_offset = (cl_uint *)malloc((stream_num + 1) * sizeof(cl_uint));
-	CHECK_ALLOCATION(output, "Failed to allocate host memory. (pkt_offset)");
+	CHECK_ALLOCATION(pkt_offset, "Failed to allocate host memory. (pkt_offset)");
 
 	keys = (cl_uchar *)malloc(stream_num * keySize);
-	CHECK_ALLOCATION(output, "Failed to allocate host memory. (keys)");
+	CHECK_ALLOCATION(keys, "Failed to allocate host memory. (keys)");
 
 	ivs = (cl_uchar *)malloc(stream_num * AES_IV_SIZE);
-	CHECK_ALLOCATION(output, "Failed to allocate host memory. (ivs)");
+	CHECK_ALLOCATION(ivs, "Failed to allocate host memory. (ivs)");
 
 #else
 	cl_uint i, j;
@@ -398,12 +398,19 @@ AESEncryptDecrypt::runCLKernels(void)
 	size_t globalThreads;
     
 	// !!!???
+#if !defined(DYNAMIC_STREAM)
 	if (decrypt) {
 		globalThreads = block_count;
 	} else {
 		globalThreads = num_flows;
 	}
-	size_t localThreads = 256;
+#endif
+
+	// 64 is wavefront size
+	// localThreads is to specify the work-group size, 
+	//   which is better to be a multiple of wavefront
+	size_t localThreads = 256; // 64 * 4
+	
 
 //	std::cout << "Dimension : " << globalThreads << " " << localThreads << std::endl;
 
@@ -428,13 +435,18 @@ AESEncryptDecrypt::runCLKernels(void)
 	}
 	
  
-//    std::cout << "kernelWorkGroupSize : " << kernelInfo.kernelWorkGroupSize
-//        << "maxWorkItemSizes[0]" << deviceInfo.maxWorkItemSizes[0]
-//        << "maxWorkGroupSize" << deviceInfo.maxWorkGroupSize << std::endl;
+    std::cout << "kernelWorkGroupSize : " << kernelInfo.kernelWorkGroupSize
+        << ", maxWorkItemSizes[0] : " << deviceInfo.maxWorkItemSizes[0]
+        << ", maxWorkGroupSize : " << deviceInfo.maxWorkGroupSize
+		<< ", maxComputeUnits £º" << deviceInfo.maxComputeUnits
+		<< ", maxMemAllocSize : " << deviceInfo.maxMemAllocSize << std::endl;
+
+
 #if defined(DYNAMIC_STREAM)
 
 	unsigned int this_stream_num;
-	unsigned int this_buffer_size;
+	unsigned int this_buffer_size = 0;
+	unsigned int bytes = 0;
 
 	cl_event writeEvt;
 	CPerfCounter t, counter;
@@ -459,13 +471,18 @@ AESEncryptDecrypt::runCLKernels(void)
 			keys, ivs,
 			pkt_offset, &this_stream_num);
 
+		if (this_stream_num > stream_num) {
+			std::cout << "What's the problem!!!!" << std::endl;
+			exit(0);
+		}
+
 		t.Stop();
 
 		timeLog->Msg( "\n%s\n", "---------------------------", 0);
 
 		timeLog->Timer(
-           "%s %f s\n", "Get Streams Time", 
-           t.GetTotalTime(), 
+           "%s %f ms\n", "Get Streams Time",
+           t.GetTotalTime(),
            10,
            1);
 
@@ -474,8 +491,27 @@ AESEncryptDecrypt::runCLKernels(void)
 		timeLog->Msg("%s %d streams\n", " This time we have ", this_stream_num);
 		timeLog->Msg("%s %d byte\n", " This buffer size is ", this_buffer_size);
 
-		if (this_stream_num < globalThreads)
-			continue;
+		bytes += this_buffer_size;
+
+		if (this_stream_num < 256) continue;
+
+		//!!!!!!!!!!!!!!!!!!! BUG HERE: globalThreads cannot be greater than this_stream_num!!!!!!!!!!!!!!!!!!!
+		// Get the reasonable global thread number
+		if (this_stream_num / localThreads > 1) {
+			if (this_stream_num % localThreads == 0) { // just equal
+				globalThreads = this_stream_num;
+			} else { // pad globalThreads to be a multiple of localThreads
+				globalThreads = (this_stream_num / localThreads) * localThreads;
+			} // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!why cannot +1 ? more than this_stream_num
+		} else {
+			globalThreads = localThreads;
+		}
+
+		timeLog->Msg("%s %d\n", "global Threads:", globalThreads);
+		timeLog->Msg("%s %d\n", "this_stream_num£º", this_stream_num);
+//		std::cout<<"Global threads: " << globalThreads 
+//			<< "\n Local Thread: "<< localThreads 
+//			<< "\n this_stream_num£º " << this_stream_num << std::endl;
 
 		t.Reset();
 		t.Start();
@@ -529,6 +565,9 @@ AESEncryptDecrypt::runCLKernels(void)
 				&writeEvt);
 		CHECK_OPENCL_ERROR(status, "clEnqueueWriteBuffer failed. (ivsBuffer)");
 
+		status = clFinish(commandQueue);
+		CHECK_OPENCL_ERROR(status, "clFinish failed.");
+
 		t.Stop();
 
 		timeLog->Timer(
@@ -547,8 +586,8 @@ AESEncryptDecrypt::runCLKernels(void)
 		status = clSetKernelArg(kernel, 1, sizeof(cl_mem), (void *)&inputBuffer);
 		CHECK_OPENCL_ERROR(status, "clSetKernelArg failed. (inputBuffer)");
 
-		status = clSetKernelArg(kernel, 2, sizeof(cl_uint), (void *)&stream_num);
-		CHECK_OPENCL_ERROR(status, "clSetKernelArg failed. (num_flows)");
+		status = clSetKernelArg(kernel, 2, sizeof(cl_uint), (void *)&this_stream_num);
+		CHECK_OPENCL_ERROR(status, "clSetKernelArg failed. (stream_num)");
 
 		status = clSetKernelArg(kernel, 3, sizeof(cl_uint), (void *)&rounds);
 		CHECK_OPENCL_ERROR(status, "clSetKernelArg failed. (rounds)");
@@ -562,13 +601,6 @@ AESEncryptDecrypt::runCLKernels(void)
 		status = clSetKernelArg(kernel, 6, sizeof(cl_mem), (void *)&ivsBuffer);
 		CHECK_OPENCL_ERROR(status, "clSetKernelArg failed. (ivsBuffer)");
 
-		/*
-		// Fix the globalThreads and localThreads
-		if (globalThreads < this_stream_num)
-			globalThreads = this_stream_num;
-		if (localThreads < this_stream_num)
-			localThreads = this_stream_num;
-		*/
 
 		//Enqueue a kernel run call.
 		cl_event ndrEvt;
@@ -586,8 +618,8 @@ AESEncryptDecrypt::runCLKernels(void)
 
 		//	std::cout << "After Kernel Running ---------------------" << std::endl;
 
-		status = clFlush(commandQueue);
-		CHECK_OPENCL_ERROR(status, "clFlush failed.");
+		status = clFinish(commandQueue);
+		CHECK_OPENCL_ERROR(status, "clFinish failed.");
 
 		status = sampleCommon->waitForEventAndRelease(&ndrEvt);
 		CHECK_ERROR(status, SDK_SUCCESS, "WaitForEventAndRelease(ndrEvt) Failed");
@@ -608,7 +640,7 @@ AESEncryptDecrypt::runCLKernels(void)
 		status = clEnqueueReadBuffer(
 					commandQueue,
 					outputBuffer,
-					CL_FALSE,
+					CL_TRUE,
 					0,
 					sizeof(cl_uchar) * this_buffer_size,
 					output,
@@ -617,8 +649,8 @@ AESEncryptDecrypt::runCLKernels(void)
 					&readEvt);
 		CHECK_OPENCL_ERROR(status, "clEnqueueReadBuffer failed.");
 
-		status = clFlush(commandQueue);
-		CHECK_OPENCL_ERROR(status, "clFlush failed.");
+		status = clFinish(commandQueue);
+		CHECK_OPENCL_ERROR(status, "clFinish failed.");
 
 		status = sampleCommon->waitForEventAndRelease(&readEvt);
 		CHECK_ERROR(status, SDK_SUCCESS, "WaitForEventAndRelease(readEvt) Failed");
@@ -638,7 +670,8 @@ AESEncryptDecrypt::runCLKernels(void)
 
 	counter.Stop();
 
-	std::cout << "End of execution, now is " << counter.GetTotalTime() << std::endl;
+	std::cout << "End of execution, now the program costs : " << counter.GetTotalTime() << " ms" << std::endl;
+	std::cout << "Processing speed is " << (bytes * 8 / 1000) / counter.GetTotalTime() << " Mbps" << std::endl;
 
 #else
 	cl_event writeEvt;
@@ -872,6 +905,11 @@ void AESEncryptDecrypt::printStats()
 
 	timeLog->printLog();
 
+	std::cout << "\n-------------------------------------------------\n";
+
+#if defined(DYNAMIC_STREAM)
+	
+#else
 	std::cout << "num_flows : " << num_flows << " flow_len : " << flow_len << std::endl;
 
 	std::cout << "setupTime : " << setupTime << std::endl;
@@ -879,6 +917,7 @@ void AESEncryptDecrypt::printStats()
 			<< bits/(1000000000 * totalKernelTime) << std::endl; 
 	std::cout << "totalTime : " << totalTime << " "
 			<< bits/(1000000000 * totalTime) << std::endl;
+#endif
 }
 
 int AESEncryptDecrypt::cleanup()
@@ -969,3 +1008,5 @@ main(int argc, char * argv[])
 
 	return SDK_SUCCESS;
 }
+
+#endif // TRANSFER_OVERLAP

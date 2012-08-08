@@ -163,6 +163,7 @@ unsigned int StreamGenerator::GetStreams(unsigned char *buffer, unsigned int buf
 
 	*stream_num = stream; // tell the caller how many frames we generated
 
+	/*
 	do {
 		elapsed_time = t.GetElapsedTime();
 		
@@ -172,7 +173,7 @@ unsigned int StreamGenerator::GetStreams(unsigned char *buffer, unsigned int buf
 		}
 
 
-	} while(abs(elapsed_time - time_point) > 1);
+	} while(abs(elapsed_time - time_point) > 1);*/
 
 	return stream_offset[stream];
 }

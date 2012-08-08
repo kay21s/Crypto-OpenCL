@@ -17,20 +17,24 @@
 
 using namespace streamsdk;
 
-#define NUM_FLOWS 1024
+#define EORD false  // false->encryption, true->decryption (not all available)
+#define DEVICE_ID 0 //0->integrated GPU, 1->discrete GPU
+//#define TRANSFER_OVERLAP 0
+#define DYNAMIC_STREAM 1
+
+#define NUM_FLOWS 4096
 #define FLOW_LEN 256
 #define ITERATION 10
-#define EORD false  // false->encryption, true->decryption
-#define DEVICE_ID 0 //0->integrated GPU, 1->discrete GPU
 
-#define STREAM_NUM 2048
+
+#define STREAM_NUM 16000 //16384
 #define INTERVAL 50 //ms
 
-#define AVG_DEADLINE 120 //ms
+#define AVG_DEADLINE 100 //ms
 #define VAR_DEADLINE 5
-#define AVG_RATE	50000
+#define AVG_RATE	50000 // bps
 #define VAR_RATE	10
-#define AVG_PERIOD	120
+#define AVG_PERIOD	100 // ms
 #define VAR_PERIOD	5
 
 
@@ -52,6 +56,7 @@ namespace AES
         cl_double        totalKernelTime;/**< Time for kernel execution */
         cl_double       totalProgramTime;/**< Time for program execution */
         cl_double    referenceKernelTime;/**< Time for reference implementation */
+
         cl_uchar      *input;            /**< Input array */
         cl_uchar      *output;           /**< Output array */
         cl_uchar      *keys;              /**< Encryption Key */
@@ -65,6 +70,20 @@ namespace AES
 		cl_mem       pktIndexBuffer; /* For networking decryption*/
         cl_mem       keyBuffer;
         cl_mem       ivsBuffer;
+
+#if defined(TRANSFER_OVERLAP)
+		cl_uchar      *input1;            /**< Input array */
+        cl_uchar      *output1;           /**< Output array */
+        cl_uint	      *pkt_offset1;       /**< Packet Offset */
+        cl_uchar      *keys1;              /**< Encryption Key */
+        cl_uchar      *ivs1;              /**< Initial data */
+
+		cl_mem       inputBuffer1;        /**< CL memory input buffer */
+        cl_mem       outputBuffer1;       /**< CL memory output buffer */
+        cl_mem       pktOffsetBuffer1;
+        cl_mem       keyBuffer1;
+        cl_mem       ivsBuffer1;
+#endif
 		
         cl_context   context;            /**< CL context */
         cl_device_id *devices;           /**< CL device list */		
@@ -156,6 +175,18 @@ namespace AES
 
 		int setupDecryption();
 		int setupEncryption();
+
+
+		/**/
+#if defined(TRANSFER_OVERLAP)
+		int overlapMapBuffer0(cl_event *);
+		int overlapMapBuffer1(cl_event *);
+		int overlapFillBufferUnmap0(unsigned int *, unsigned int *, cl_event *);
+		int overlapFillBufferUnmap1(unsigned int *, unsigned int *, cl_event *);
+		int overlapLaunchKernel0(unsigned int);
+		int overlapLaunchKernel1(unsigned int);
+		int overlapOutput(unsigned int, cl_mem, int);
+#endif
 	
         /**
          * Allocate and initialize host memory array with random values
