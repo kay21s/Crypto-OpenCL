@@ -433,8 +433,8 @@ int AESEncryptDecrypt::overlapFillBufferUnmap0(unsigned int *this_stream_num, un
            10,
            1);
 	// Log
-	timeLog->Msg("%s %d streams\n", " 0 -- This time we have ", *this_stream_num);
-	timeLog->Msg("%s %d bytes\n", " 0 -- Buffer size is ", *this_buffer_size);
+	timeLog->Msg("%s %d streams\n", "     -- This time we have ", *this_stream_num);
+	timeLog->Msg("%s %d bytes\n", "     -- Buffer size is ", *this_buffer_size);
 
 	if (*this_stream_num > stream_num) {
 		std::cout << "What's the problem!!!!" << std::endl;
@@ -480,6 +480,7 @@ int AESEncryptDecrypt::overlapFillBufferUnmap0(unsigned int *this_stream_num, un
                 &event);
     CHECK_OPENCL_ERROR(status, "clEnqueueUnmapMemObject(ivsBuffer1) failed.");
  
+	// Wait for all Unmap and previous operations to complete!!!
     status = clWaitForEvents(1, &event);
     CHECK_OPENCL_ERROR(status, "clWaitForEvents() failed.");
 
@@ -520,8 +521,8 @@ int AESEncryptDecrypt::overlapFillBufferUnmap1(unsigned int *this_stream_num, un
            t.GetTotalTime(),
            10,
            1);
-	timeLog->Msg("%s %d streams\n", " 1 -- This time we have ", *this_stream_num);
-	timeLog->Msg("%s %d bytes\n", " 1 -- Buffer size is ", *this_buffer_size);
+	timeLog->Msg("%s %d streams\n", "     -- This time we have ", *this_stream_num);
+	timeLog->Msg("%s %d bytes\n", "     -- Buffer size is ", *this_buffer_size);
 
 	if (*this_stream_num > stream_num) {
 		std::cout << "What's the problem!!!!" << std::endl;
@@ -606,6 +607,9 @@ int AESEncryptDecrypt::overlapLaunchKernel0(unsigned int this_stream_num)
 		globalThreads = localThreads;
 	}
 
+	if (this_stream_num < 256) 
+			globalThreads = localThreads = this_stream_num;
+
 	timeLog->Msg("%s %d\n", " 0 -- global Threads:", globalThreads);
 
 	status = clSetKernelArg(kernel, 0, sizeof(cl_mem), (void *)&outputBuffer);
@@ -679,6 +683,9 @@ int AESEncryptDecrypt::overlapLaunchKernel1(unsigned int this_stream_num)
 		globalThreads = localThreads;
 	}
 
+	if (this_stream_num < 256) 
+			globalThreads = localThreads = this_stream_num;
+
 	timeLog->Msg("%s %d\n", " 1 -- global Threads:", globalThreads);
 
 	status = clSetKernelArg(kernel, 0, sizeof(cl_mem), (void *)&outputBuffer1);
@@ -731,7 +738,7 @@ int AESEncryptDecrypt::overlapLaunchKernel1(unsigned int this_stream_num)
 }
 
 int AESEncryptDecrypt::overlapOutput(unsigned int this_buffer_size, cl_mem resultBuffer, int id)
-{;
+{
 	cl_int status;
 	CPerfCounter t;
 	void *ptrResult;
@@ -747,7 +754,7 @@ int AESEncryptDecrypt::overlapOutput(unsigned int this_buffer_size, cl_mem resul
                     CL_MAP_READ,
                     0,
                     this_buffer_size,
-                    0, 
+                    0,
                     NULL,
                     NULL,
                     &status);
@@ -827,18 +834,22 @@ AESEncryptDecrypt::runCLKernels(void)
 	cl_event map_event_0, map_event_1;
 	unsigned int stream_num_0, stream_num_1;
 	unsigned int buffer_size_0, buffer_size_1;
-	unsigned int bytes = 0;
+	unsigned int bytes = 0, first;
 	bool buffer1_launched = false;
 
-	CPerfCounter t, counter;
+	CPerfCounter t, counter, loopcounter;
+	double elapsed_time;
+	int interval_count = 1;
+	double time_point = INTERVAL;
 
 	std::cout << "Stream num : " << stream_num
 		<< ", Start time : " << streamGenerator.GetStartTimestamp()
 		<< ", Interval : " << streamGenerator.GetInterval() << std::endl;
 
-	counter.Reset();
-	counter.Start();
 	streamGenerator.StartStreams();
+
+	loopcounter.Reset();
+	loopcounter.Start();
 
 	/* 0. Map buffer 0 at first time before loop */
 	overlapMapBuffer0(&map_event_0);
@@ -847,16 +858,52 @@ AESEncryptDecrypt::runCLKernels(void)
 
 		timeLog->loopMarker();
 		timeLog->Msg( "\n%s %d loop\n", "---------------------------", i);
+		
 
 		/* 1. Fills buffer *0*, unless the first loop, this overlap with kernel 1*/
 		overlapFillBufferUnmap0(&stream_num_0, &buffer_size_0, &map_event_0);
-		//if (stream_num < 256) continue;
-		bytes += buffer_size_0;
 
-		/* This is a CPU/GPU synchronization point, as all commands in the
+		if(i != 0)	
+			bytes += buffer_size_0;
+
+		/* -------------------------------------------------------------
+		  This is a CPU/GPU synchronization point, as all commands in the
         in-order queue before the preceding cl*Unmap() are now finished.
-        We can accurately sample the per-loop timer here.*/
-		///////////////////////////
+        We can accurately sample the per-loop timer here.
+		loopcounter.Stop();
+		loopcounter.GetElapsedTime();
+		timeLog->Timer(
+			   "%s %f ms\n", " >>>>>> Loop time elapsed",
+			   loopcounter.GetTotalTime(),
+			   10,
+			   1);
+		loopcounter.Reset();
+		loopcounter.Start();
+		------------------------------------------------------------- */
+		first = 1;
+		do {
+			elapsed_time = loopcounter.GetElapsedTime();
+			if (first) {
+				timeLog->Msg( "\n%s %d\n", "<<<<<<<<Elapsed Time : ", elapsed_time);
+				first = 0;
+			}
+
+			if (elapsed_time - time_point > 1) { // surpassed the time point more than 1 ms
+				//std::cout << "Timepoint Lost! " << elapsed_time << "/" << time_point << std::endl;
+				timeLog->Msg( "\n%s %d\n", ">>>>>>>>Time point lost!!!! : ", elapsed_time);
+				break;
+			}
+		} while(abs(elapsed_time - time_point) > 1);
+		//std::cout << elapsed_time << "  " << time_point << std::endl;
+		timeLog->Msg( "%s %d\n", ">>>>>>>>Time point arrived : ", elapsed_time);
+		loopcounter.Reset();
+		loopcounter.Start();
+
+		// Start the timer of the algorithm
+		if (i == 1)	{
+			counter.Reset();
+			counter.Start();
+		}
 
 		/* 2. Map buffer *1*, The map needs to precede
         the next kernel launch in the in-order queue, otherwise waiting
@@ -864,16 +911,41 @@ AESEncryptDecrypt::runCLKernels(void)
 		overlapMapBuffer1(&map_event_1);
 
 		// The output buffer 1
-		if (buffer1_launched == true) // if not the first time
-			overlapOutput(buffer_size_1, outputBuffer1,1);
+		//if (buffer1_launched == true) // if not the first time
+		//	overlapOutput(buffer_size_1, outputBuffer1,1);
 
 		/* 3. Asynchronous launch of kernel for buffer *0* */
 		overlapLaunchKernel0(stream_num_0);
 
 		/* 4. Fill buffer *1*, Overlap with kernel 0 */
 		overlapFillBufferUnmap1(&stream_num_1, &buffer_size_1, &map_event_1);
-		//if (stream_num < 256) continue;
-		bytes += buffer_size_1;
+		if(i != 0)
+			bytes += buffer_size_1;
+
+		/* -------------------------------------------------------------
+		  This is a CPU/GPU synchronization point, as all commands in the
+        in-order queue before the preceding cl*Unmap() are now finished.
+        We can accurately sample the per-loop timer here.
+		------------------------------------------------------------- */
+		first = 1;
+		do {
+			elapsed_time = loopcounter.GetElapsedTime();
+			if (first) {
+				timeLog->Msg( "\n%s %d\n", "<<<<<<<<Elapsed Time : ", elapsed_time);
+				first = 0;
+			}
+
+			if (elapsed_time - time_point > 1) { // surpassed the time point more than 1 ms
+				//std::cout << "Timepoint Lost! " << elapsed_time << "/" << time_point << std::endl;
+				timeLog->Msg( "\n%s %d\n", ">>>>>>>>Time point lost!!!! : ", elapsed_time);
+				break;
+			}
+		} while(abs(elapsed_time - time_point) > 1);
+		//std::cout << elapsed_time << "  " << time_point << std::endl;
+		timeLog->Msg( "%s %d\n", ">>>>>>>>Time point arrived : ", elapsed_time);
+		loopcounter.Reset();
+		loopcounter.Start();
+
 
 		/* 5. Map buffer *0*, The map needs to precede
         the next kernel launch in the in-order queue, otherwise waiting
@@ -881,7 +953,7 @@ AESEncryptDecrypt::runCLKernels(void)
 		overlapMapBuffer0(&map_event_0);
 
 		// The output buffer 0
-		overlapOutput(buffer_size_0, outputBuffer,0);
+		//overlapOutput(buffer_size_0, outputBuffer,0);
 
 		/* 6. Asynchronous launch of kernel for buffer *1* */
 		overlapLaunchKernel1(stream_num_1);
@@ -896,8 +968,9 @@ AESEncryptDecrypt::runCLKernels(void)
 
 	counter.Stop();
 
-	std::cout << "End of execution, now the program costs : " << counter.GetTotalTime() << " ms" << std::endl;
-	std::cout << "Processing speed is " << (bytes * 8 / 1000) / counter.GetTotalTime() << " Mbps" << std::endl;
+	std::cout << "End of execution, now the program costs : " << counter.GetTotalTime() << " ms" 
+		<< ", bits : " << bytes * 8 << std::endl;
+	std::cout << "Processing speed is " << ((bytes * 8) / 1e3) / counter.GetTotalTime() << " Mbps" << std::endl;
 
 	return SDK_SUCCESS;
 }
@@ -982,7 +1055,6 @@ AESEncryptDecrypt::run()
 void AESEncryptDecrypt::printStats()
 {
 	totalTime = setupTime + totalKernelTime;
-	cl_ulong bits = 8 * num_flows * flow_len;
 
 	timeLog->printLog();
 

@@ -9,6 +9,16 @@
 #endif
 
 /*
+
+|-----------------------------|-----------------------------|-----------------------------| Stream I
+_starttime of StreamI        arrive1                       arrive2                       arrive3
+
+            |----------------------|----------------------|----------------------|----------------------| Timeline
+		Start                     Interval1              Interval2             Interval3
+
+*/
+
+/*
 OneStream::OneStream(unsigned int rate, unsigned int deadline, unsigned int period)
 {
 	setRate(rate);
@@ -93,6 +103,16 @@ void StreamGenerator::InitStreams(unsigned int rate_avg, unsigned int rate_var,
 		_streams[i].setDeadline(res);
 		_streams[i].setPeriod(res);
 	}
+	if (_interval == 0) {
+		std::cout << "Input interval to StreamGenerator first !" << std::endl;
+		exit(0);
+	}
+	for (unsigned int i = 0; i < _stream_num; i ++) {
+		int a = getrand(_interval, 5);
+		if (a < 0 || a > _interval * 2)
+			std::cout << ">>>>>>>>>>>>>>>>>>>>>>>>>Error in start time " << a << std::endl;
+		_streams[i].setStartTime(a);
+	}
 	for (unsigned int i = 0; i < _stream_num; i ++) {
 		//_streams[i].setPeriod(getrand(_period_avg, _period_var));
 		_streams[i].setFrameSize();
@@ -124,9 +144,9 @@ unsigned int StreamGenerator::GetStreams(unsigned char *buffer, unsigned int buf
 	double elapsed_time;
 	unsigned int time_point;
 	unsigned int interval_frames;
+	unsigned int stream = 0; // which frame are we generating
 
 	_times ++;
-	unsigned int stream = 0; // which frame are we generating
 	stream_offset[0] = 0;
 	time_point = _interval * _times;
 
@@ -134,9 +154,12 @@ unsigned int StreamGenerator::GetStreams(unsigned char *buffer, unsigned int buf
 
 		// For Each Stream
 
+		// Note: the start time of each stream is ahead of _start, 
+		// in other words, it is negative in the GetStream timeline
+		// this design is to guaratee the simple and random of this tool
 		// kI/p - (k-1)I/p = frame number in the interval, maybe not fixed
-		interval_frames = time_point / _streams[i].getPeriod()
-			- (time_point - _interval) / _streams[i].getPeriod();
+		interval_frames = (time_point + _streams[i].getStartTime()) / _streams[i].getPeriod()
+			- (time_point - _interval + _streams[i].getStartTime()) / _streams[i].getPeriod();
 		if (interval_frames == 0) {
 			//std::cout << "interval_frames == 0~~~~~" << std::endl;
 			//exit(0);
@@ -155,8 +178,8 @@ unsigned int StreamGenerator::GetStreams(unsigned char *buffer, unsigned int buf
 		//memset(&(buffer[stream_offset[stream]]), 'a', interval_frames * _streams[i].getFrameSize());
 
 		// Copy key and iv to the buffer
-		memcpy(&(keyBuffer[stream * 16]), _streams[i].getKeyPtr(), 16);
-		memcpy(&(ivBuffer[stream * 16]), _streams[i].getIVPtr(), 16);
+		//memcpy(&(keyBuffer[stream * 16]), _streams[i].getKeyPtr(), 16);
+		//memcpy(&(ivBuffer[stream * 16]), _streams[i].getIVPtr(), 16);
 
 		stream ++;
 	}
@@ -171,8 +194,6 @@ unsigned int StreamGenerator::GetStreams(unsigned char *buffer, unsigned int buf
 			std::cout << "Time point lost!!!!" << elapsed_time << " "<<  time_point << std::endl;
 			exit(0);
 		}
-
-
 	} while(abs(elapsed_time - time_point) > 1);*/
 
 	return stream_offset[stream];

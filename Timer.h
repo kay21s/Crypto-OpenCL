@@ -4,6 +4,11 @@
  * \file Timer.h
  * \brief A timer class that provides a cross platform timer for use
  * in timing code progress with a high degree of accuracy.
+ * FIXME:
+ * 1s = 1000ms (millisecond)
+ * 1ms = 1000us (microsecond)
+ * 1us = 1000ns (nanosecond)
+ * this counter returns in terms of us
  */
 #ifdef _WIN32
 /**
@@ -64,7 +69,7 @@ public:
      * \return Amount of time that has accumulated between the \a Start()
      * and \a Stop() function calls
 	 *
-	 * Return unit is ms~~~~~
+	 * Return unit is us~~~~~
      */
 	double CPerfCounter::GetTotalTime(void);
 

@@ -19,24 +19,36 @@ using namespace streamsdk;
 
 #define EORD false  // false->encryption, true->decryption (not all available)
 #define DEVICE_ID 0 //0->integrated GPU, 1->discrete GPU
-//#define TRANSFER_OVERLAP 0
+
+#define OLD_VERSION 1
+//#define TRANSFER_OVERLAP 1 // comment this line to disable overlap and use AESEncryptDecrypt.cpp
+//#define MULTICORE 1
+#define WORKER_CORE 4
+
+#if defined(MULTICORE)
+	#undef TRANSFER_OVERLAP
+	#undef OLD_VERSION
+#endif
+#if defined(TRANSFER_OVERLAP)
+	#undef OLD_VERSION
+#endif
+
 #define DYNAMIC_STREAM 1
 
+#define STREAM_NUM 15000  //15000 //16384
+#define INTERVAL   40 //ms
+
+#define AVG_DEADLINE 80 //ms
+#define VAR_DEADLINE 5
+#define AVG_PERIOD	 80 // ms
+#define VAR_PERIOD	 5
+#define AVG_RATE	55000// // 65000bps
+#define VAR_RATE	10
+
+// for no transfer overlap
 #define NUM_FLOWS 4096
 #define FLOW_LEN 256
-#define ITERATION 10
-
-
-#define STREAM_NUM 16000 //16384
-#define INTERVAL 50 //ms
-
-#define AVG_DEADLINE 100 //ms
-#define VAR_DEADLINE 5
-#define AVG_RATE	50000 // bps
-#define VAR_RATE	10
-#define AVG_PERIOD	100 // ms
-#define VAR_PERIOD	5
-
+#define ITERATION 13
 
 /**
  * AESEncryptDecrypt 

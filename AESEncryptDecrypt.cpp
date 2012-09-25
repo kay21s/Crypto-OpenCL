@@ -1,6 +1,6 @@
 #include "AESEncryptDecrypt.hpp"
 
-#if !defined(TRANSFER_OVERLAP)
+#if defined(OLD_VERSION)
 
 using namespace AES;
 
@@ -43,6 +43,7 @@ int AESEncryptDecrypt::setupAESEncryptDecrypt()
 	keySizeBits = keySize*sizeof(cl_uchar); 
 
 	buffer_size = streamGenerator.GetMaxBufferSize();
+	std::cout << ">>>>>>>>>>.Max buffer size is : " << buffer_size << std::endl;
 	stream_num = streamGenerator.GetStreamNumber();
 
 	input = (cl_uchar *)malloc(buffer_size * sizeof(cl_uchar));
@@ -446,18 +447,20 @@ AESEncryptDecrypt::runCLKernels(void)
 
 	unsigned int this_stream_num;
 	unsigned int this_buffer_size = 0;
-	unsigned int bytes = 0;
+	unsigned int bytes = 0, first;
+	double time_point = INTERVAL, elapsed_time;
 
 	cl_event writeEvt;
-	CPerfCounter t, counter;
+	CPerfCounter t, counter, loopcounter;
 
 	std::cout << "Stream num : " << stream_num
 		<< ", Start time : " << streamGenerator.GetStartTimestamp()
 		<< ", Interval : " << streamGenerator.GetInterval() << std::endl;
 
-	counter.Reset();
-	counter.Start();
 	streamGenerator.StartStreams();
+
+	loopcounter.Reset();
+	loopcounter.Start();
 
 	for (int i = 0; i < iterations; i ++) {
 
@@ -465,6 +468,11 @@ AESEncryptDecrypt::runCLKernels(void)
 
 		t.Reset();
 		t.Start();
+
+		if (i == 1) {
+			counter.Reset();
+			counter.Start();
+		}
 
 		// Generate Stream Data
 		this_buffer_size = streamGenerator.GetStreams(input, buffer_size, 
@@ -487,13 +495,13 @@ AESEncryptDecrypt::runCLKernels(void)
            1);
 
 		timeLog->Msg("%s %d ms\n", " Time after GetStreams is " , counter.GetElapsedTime());
-		timeLog->Msg("%s %d ms\n", " Time ought to be ", INTERVAL * (i + 1));
+		//timeLog->Msg("%s %d ms\n", " Time ought to be ", INTERVAL * (i + 1));
 		timeLog->Msg("%s %d streams\n", " This time we have ", this_stream_num);
 		timeLog->Msg("%s %d byte\n", " This buffer size is ", this_buffer_size);
 
-		bytes += this_buffer_size;
+		if(i != 0)
+			bytes += this_buffer_size;
 
-		if (this_stream_num < 256) continue;
 
 		//!!!!!!!!!!!!!!!!!!! BUG HERE: globalThreads cannot be greater than this_stream_num!!!!!!!!!!!!!!!!!!!
 		// Get the reasonable global thread number
@@ -506,6 +514,40 @@ AESEncryptDecrypt::runCLKernels(void)
 		} else {
 			globalThreads = localThreads;
 		}
+
+		//FIXME: 
+		if (this_stream_num < 256) 
+			globalThreads = localThreads = this_stream_num;
+
+		/* -------------------------------------------------------------
+		  This is a CPU/GPU synchronization point, as all commands in the
+        in-order queue before the preceding cl*Unmap() are now finished.
+        We can accurately sample the per-loop timer here.
+		*/
+		first = 1;
+		do {
+			elapsed_time = loopcounter.GetElapsedTime();
+			if (first) {
+				timeLog->Msg( "\n%s %d\n", "<<<<<<<<Elapsed Time : ", elapsed_time);
+				first = 0;
+			}
+
+			if (elapsed_time - time_point > 1) { // surpassed the time point more than 1 ms
+				//std::cout << "Timepoint Lost! " << elapsed_time << "/" << time_point << std::endl;
+				timeLog->Msg( "\n%s %d\n", ">>>>>>>>Time point lost!!!! : ", elapsed_time);
+				break;
+			}
+		} while(abs(elapsed_time - time_point) > 1);
+		//std::cout << elapsed_time << "  " << time_point << std::endl;
+		timeLog->Msg( "%s %d\n", ">>>>>>>>Time point arrived : ", elapsed_time);
+		loopcounter.Reset();
+		loopcounter.Start();
+
+		
+		/* ------------------------------------------------------------- */
+
+
+
 
 		timeLog->Msg("%s %d\n", "global Threads:", globalThreads);
 		timeLog->Msg("%s %d\n", "this_stream_num£º", this_stream_num);
@@ -671,7 +713,7 @@ AESEncryptDecrypt::runCLKernels(void)
 	counter.Stop();
 
 	std::cout << "End of execution, now the program costs : " << counter.GetTotalTime() << " ms" << std::endl;
-	std::cout << "Processing speed is " << (bytes * 8 / 1000) / counter.GetTotalTime() << " Mbps" << std::endl;
+	std::cout << "Processing speed is " << (bytes * 8 / 1e3) / counter.GetTotalTime() << " Mbps" << std::endl;
 
 #else
 	cl_event writeEvt;

@@ -38,6 +38,7 @@ public:
 		unsigned int b_rate = _rate/8; // convert to byte
 		_frame_size = ceil((float)((b_rate * _period * 1e-3) / 16)) * 16; // a frame block should be 128 bits aligned
 	}
+	void setStartTime(unsigned int a) {_starttime = a;}
 
 	void setIV(unsigned char a)		{memset(_iv, a, 16);}
 	void setKey(unsigned char a)	{memset(_key, a, 16);}
@@ -46,6 +47,7 @@ public:
 	unsigned int getDeadline()	{return _deadline;} // unit : ms
 	unsigned int getPeriod()	{return _period;} // unit : ms
 	unsigned int getFrameSize()	{return _frame_size;}
+	unsigned int getStartTime()	{return _starttime;}
 
 	unsigned char *getIVPtr()	{return _iv;}
 	unsigned char *getKeyPtr()	{return _key;}
@@ -55,6 +57,7 @@ private:
 	unsigned int _deadline;	// ms
 	unsigned int _period;	// ms
 	unsigned int _frame_size;	// Bytes
+	unsigned int _starttime; //ms
 
 	unsigned char _iv[16]; //128 bits initial vector
 	unsigned char _key[16]; //128 bits key
@@ -65,7 +68,7 @@ class StreamGenerator {
 
 public:
 
-	StreamGenerator() : _times(0), _stream_num(0), _start(0) {}
+	StreamGenerator() : _times(0), _stream_num(0), _start(0), _interval(0) {}
 	~StreamGenerator() {}
 
 	void SetStreamNumber(unsigned int);
