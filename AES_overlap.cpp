@@ -1,6 +1,6 @@
 #include "AESEncryptDecrypt.hpp"
 
-#if defined(TRANSFER_OVERLAP)
+//#if defined(TRANSFER_OVERLAP)
 
 using namespace AES;
 
@@ -24,6 +24,9 @@ int AESEncryptDecrypt::setupAESEncryptDecrypt()
 	keySizeBits = keySize*sizeof(cl_uchar); 
 
 	buffer_size = streamGenerator.GetMaxBufferSize();
+	// round up to 256, or it won't work in Linux
+	buffer_size = buffer_size & (~0xFF) | 0x100;
+	std::cout << ">>>>>>>>>>.Max buffer size is : " << buffer_size << std::endl;
 	stream_num = streamGenerator.GetStreamNumber();
 
 	return SDK_SUCCESS;
@@ -136,11 +139,6 @@ int AESEncryptDecrypt::setupEncryption(void)
 	return SDK_SUCCESS;
 }
 
-int AESEncryptDecrypt::setupDecryption(void)
-{
-	return SDK_SUCCESS;
-}
-
 int AESEncryptDecrypt::verifyResults(void)
 {
 	return SDK_SUCCESS;
@@ -236,18 +234,9 @@ int AESEncryptDecrypt::setupCL(void)
 	retValue = sampleCommon->buildOpenCLProgram(program, context, buildData);
 	CHECK_ERROR(retValue, 0, "sampleCommon::buildOpenCLProgram() failed");
 
-	/* get a kernel object handle for a kernel with the given name */
-	if(decrypt)
-	{
-		kernel = clCreateKernel(program, "AES_cbc_128_decrypt", &status);
-		setupDecryption();
-	}
-	else
-	{
-		kernel = clCreateKernel(program, "AES_cbc_128_encrypt_new", &status);
-		setupEncryption();
-	}
+	kernel = clCreateKernel(program, "AES_cbc_128_encrypt", &status);
 	CHECK_OPENCL_ERROR(status, "clCreateKernel failed.");
+	setupEncryption();
 
 	return SDK_SUCCESS;
 }
@@ -413,12 +402,12 @@ int AESEncryptDecrypt::overlapMapBuffer1(cl_event *mapEvent)
 int AESEncryptDecrypt::overlapFillBufferUnmap0(unsigned int *this_stream_num, unsigned int *this_buffer_size, cl_event *mapEvent)
 {
 	cl_int status;
-    cl_event event;
+	cl_event event;
 	CPerfCounter t;
 
 	// wait for previous map to complete
 	status = clWaitForEvents(1, mapEvent);
-    CHECK_OPENCL_ERROR(status, "clWaitForEvents() failed.");
+	CHECK_OPENCL_ERROR(status, "clWaitForEvents() failed.");
 
 	t.Reset();
 	t.Start();
@@ -451,7 +440,7 @@ int AESEncryptDecrypt::overlapFillBufferUnmap0(unsigned int *this_stream_num, un
                 0,
                 NULL,
                 &event);
-    CHECK_OPENCL_ERROR(status, "clEnqueueUnmapMemObject(inputBuffer1) failed.");
+	CHECK_OPENCL_ERROR(status, "clEnqueueUnmapMemObject(inputBuffer1) failed.");
 
 	status = clEnqueueUnmapMemObject(
                 commandQueue,
@@ -460,7 +449,7 @@ int AESEncryptDecrypt::overlapFillBufferUnmap0(unsigned int *this_stream_num, un
                 0,
                 NULL,
                 &event);
-    CHECK_OPENCL_ERROR(status, "clEnqueueUnmapMemObject(pktOffsetBuffer1) failed.");
+	CHECK_OPENCL_ERROR(status, "clEnqueueUnmapMemObject(pktOffsetBuffer1) failed.");
 
 	status = clEnqueueUnmapMemObject(
                 commandQueue,
@@ -469,7 +458,7 @@ int AESEncryptDecrypt::overlapFillBufferUnmap0(unsigned int *this_stream_num, un
                 0,
                 NULL,
                 &event);
-    CHECK_OPENCL_ERROR(status, "clEnqueueUnmapMemObject(keyBuffer1) failed.");
+	CHECK_OPENCL_ERROR(status, "clEnqueueUnmapMemObject(keyBuffer1) failed.");
 
 	status = clEnqueueUnmapMemObject(
                 commandQueue,
@@ -478,15 +467,15 @@ int AESEncryptDecrypt::overlapFillBufferUnmap0(unsigned int *this_stream_num, un
                 0,
                 NULL,
                 &event);
-    CHECK_OPENCL_ERROR(status, "clEnqueueUnmapMemObject(ivsBuffer1) failed.");
+	CHECK_OPENCL_ERROR(status, "clEnqueueUnmapMemObject(ivsBuffer1) failed.");
  
 	// Wait for all Unmap and previous operations to complete!!!
-    status = clWaitForEvents(1, &event);
-    CHECK_OPENCL_ERROR(status, "clWaitForEvents() failed.");
+	status = clWaitForEvents(1, &event);
+	CHECK_OPENCL_ERROR(status, "clWaitForEvents() failed.");
 
 	 // Release event
-    status = clReleaseEvent(event);
-    CHECK_OPENCL_ERROR(status, "clReleaseEvent(event) failed.");
+	status = clReleaseEvent(event);
+	CHECK_OPENCL_ERROR(status, "clReleaseEvent(event) failed.");
 
 	t.Stop();
 	timeLog->Timer(
@@ -501,12 +490,12 @@ int AESEncryptDecrypt::overlapFillBufferUnmap0(unsigned int *this_stream_num, un
 int AESEncryptDecrypt::overlapFillBufferUnmap1(unsigned int *this_stream_num, unsigned int *this_buffer_size, cl_event *mapEvent)
 {
 	cl_int status;
-    cl_event event;
+	cl_event event;
 	CPerfCounter t;
 
 	// wait for previous map to complete
 	status = clWaitForEvents(1, mapEvent);
-    CHECK_OPENCL_ERROR(status, "clWaitForEvents() failed.");
+	CHECK_OPENCL_ERROR(status, "clWaitForEvents() failed.");
 
 
 	t.Reset();
@@ -539,7 +528,7 @@ int AESEncryptDecrypt::overlapFillBufferUnmap1(unsigned int *this_stream_num, un
                 0,
                 NULL,
                 &event);
-    CHECK_OPENCL_ERROR(status, "clEnqueueUnmapMemObject(inputBuffer1) failed.");
+	CHECK_OPENCL_ERROR(status, "clEnqueueUnmapMemObject(inputBuffer1) failed.");
 
 	status = clEnqueueUnmapMemObject(
                 commandQueue,
@@ -548,7 +537,7 @@ int AESEncryptDecrypt::overlapFillBufferUnmap1(unsigned int *this_stream_num, un
                 0,
                 NULL,
                 &event);
-    CHECK_OPENCL_ERROR(status, "clEnqueueUnmapMemObject(pktOffsetBuffer1) failed.");
+	CHECK_OPENCL_ERROR(status, "clEnqueueUnmapMemObject(pktOffsetBuffer1) failed.");
 
 	status = clEnqueueUnmapMemObject(
                 commandQueue,
@@ -557,7 +546,7 @@ int AESEncryptDecrypt::overlapFillBufferUnmap1(unsigned int *this_stream_num, un
                 0,
                 NULL,
                 &event);
-    CHECK_OPENCL_ERROR(status, "clEnqueueUnmapMemObject(keyBuffer1) failed.");
+	CHECK_OPENCL_ERROR(status, "clEnqueueUnmapMemObject(keyBuffer1) failed.");
 
 	status = clEnqueueUnmapMemObject(
                 commandQueue,
@@ -566,14 +555,14 @@ int AESEncryptDecrypt::overlapFillBufferUnmap1(unsigned int *this_stream_num, un
                 0,
                 NULL,
                 &event);
-    CHECK_OPENCL_ERROR(status, "clEnqueueUnmapMemObject(ivsBuffer1) failed.");
+	CHECK_OPENCL_ERROR(status, "clEnqueueUnmapMemObject(ivsBuffer1) failed.");
  
-    status = clWaitForEvents(1, &event);
-    CHECK_OPENCL_ERROR(status, "clWaitForEvents() failed.");
+	status = clWaitForEvents(1, &event);
+	CHECK_OPENCL_ERROR(status, "clWaitForEvents() failed.");
 
 	 // Release event
-    status = clReleaseEvent(event);
-    CHECK_OPENCL_ERROR(status, "clReleaseEvent(event) failed.");
+	status = clReleaseEvent(event);
+	CHECK_OPENCL_ERROR(status, "clReleaseEvent(event) failed.");
 
 	t.Stop();
 	timeLog->Timer(
@@ -744,44 +733,44 @@ int AESEncryptDecrypt::overlapOutput(unsigned int this_buffer_size, cl_mem resul
 	void *ptrResult;
 	cl_event event;
 
-    t.Reset(); 
-    t.Start();
+	t.Reset(); 
+	t.Start();
 
-    ptrResult = (void*)clEnqueueMapBuffer(
-                    commandQueue,
-                    resultBuffer,
-                    CL_TRUE,
-                    CL_MAP_READ,
-                    0,
-                    this_buffer_size,
-                    0,
-                    NULL,
-                    NULL,
-                    &status);
-    CHECK_OPENCL_ERROR(status, "clEnqueueMapBuffer() failed.(resultBuffer)");
+	ptrResult = (void*)clEnqueueMapBuffer(
+			commandQueue,
+			resultBuffer,
+			CL_TRUE,
+			CL_MAP_READ,
+			0,
+			this_buffer_size,
+			0,
+			NULL,
+			NULL,
+			&status);
+	CHECK_OPENCL_ERROR(status, "clEnqueueMapBuffer() failed.(resultBuffer)");
 
 	/*verify or transfer to upper layer applications*/
 
 
 	status = clEnqueueUnmapMemObject(commandQueue, resultBuffer, (void *) ptrResult, 0, NULL, &event);
-    CHECK_OPENCL_ERROR(status, "clEnqueueUnmapMemObject() failed.(resultBuffer)");
- 
-    status = clWaitForEvents(1, &event);
-    CHECK_OPENCL_ERROR(status, "clWaitForEvents()");
+	CHECK_OPENCL_ERROR(status, "clEnqueueUnmapMemObject() failed.(resultBuffer)");
 
-    t.Stop();
+	status = clWaitForEvents(1, &event);
+	CHECK_OPENCL_ERROR(status, "clWaitForEvents()");
+
+	t.Stop();
 	if (id == 0) {
 		timeLog->Timer(
-			   "%s %f ms\n", " 0 -- Output buffer read time",
-			   t.GetTotalTime(),
-			   10,
-			   1);
+				"%s %f ms\n", " 0 -- Output buffer read time",
+				t.GetTotalTime(),
+				10,
+				1);
 	} else {
 		timeLog->Timer(
-			   "%s %f ms\n", " 1 -- Output buffer read time",
-			   t.GetTotalTime(),
-			   10,
-			   1);
+				"%s %f ms\n", " 1 -- Output buffer read time",
+				t.GetTotalTime(),
+				10,
+				1);
 	}
 
 	return SDK_SUCCESS;
@@ -824,12 +813,11 @@ AESEncryptDecrypt::runCLKernels(void)
 	}
 	
  
-    std::cout << "kernelWorkGroupSize : " << kernelInfo.kernelWorkGroupSize
-        << ", maxWorkItemSizes[0] : " << deviceInfo.maxWorkItemSizes[0]
-        << ", maxWorkGroupSize : " << deviceInfo.maxWorkGroupSize
-		<< ", maxComputeUnits £º" << deviceInfo.maxComputeUnits
+	std::cout << "kernelWorkGroupSize : " << kernelInfo.kernelWorkGroupSize
+		<< ", maxWorkItemSizes[0] : " << deviceInfo.maxWorkItemSizes[0]
+		<< ", maxWorkGroupSize : " << deviceInfo.maxWorkGroupSize
+		<< ", maxComputeUnits :" << deviceInfo.maxComputeUnits
 		<< ", maxMemAllocSize : " << deviceInfo.maxMemAllocSize << std::endl;
-
 
 	cl_event map_event_0, map_event_1;
 	unsigned int stream_num_0, stream_num_1;
@@ -844,7 +832,8 @@ AESEncryptDecrypt::runCLKernels(void)
 
 	std::cout << "Stream num : " << stream_num
 		<< ", Start time : " << streamGenerator.GetStartTimestamp()
-		<< ", Interval : " << streamGenerator.GetInterval() << std::endl;
+		<< ", Interval : " << streamGenerator.GetInterval()
+		<< ", Interation : " << iterations << std::endl;
 
 	streamGenerator.StartStreams();
 
@@ -863,13 +852,13 @@ AESEncryptDecrypt::runCLKernels(void)
 		/* 1. Fills buffer *0*, unless the first loop, this overlap with kernel 1*/
 		overlapFillBufferUnmap0(&stream_num_0, &buffer_size_0, &map_event_0);
 
-		if(i != 0)	
+		if (i > 1)
 			bytes += buffer_size_0;
 
 		/* -------------------------------------------------------------
 		  This is a CPU/GPU synchronization point, as all commands in the
-        in-order queue before the preceding cl*Unmap() are now finished.
-        We can accurately sample the per-loop timer here.
+		in-order queue before the preceding cl*Unmap() are now finished.
+		We can accurately sample the per-loop timer here.
 		loopcounter.Stop();
 		loopcounter.GetElapsedTime();
 		timeLog->Timer(
@@ -898,34 +887,36 @@ AESEncryptDecrypt::runCLKernels(void)
 		timeLog->Msg( "%s %d\n", ">>>>>>>>Time point arrived : ", elapsed_time);
 		loopcounter.Reset();
 		loopcounter.Start();
+		/* ------------------------------------------------------------- */
 
 		// Start the timer of the algorithm
-		if (i == 1)	{
+		// In the second loop
+		if (i == 2) {
 			counter.Reset();
 			counter.Start();
 		}
 
 		/* 2. Map buffer *1*, The map needs to precede
-        the next kernel launch in the in-order queue, otherwise waiting
-        for the map to finish would also wait for the kernel to finish.*/
+		the next kernel launch in the in-order queue, otherwise waiting
+		for the map to finish would also wait for the kernel to finish.*/
 		overlapMapBuffer1(&map_event_1);
 
 		// The output buffer 1
-		//if (buffer1_launched == true) // if not the first time
-		//	overlapOutput(buffer_size_1, outputBuffer1,1);
+		if (buffer1_launched == true) // if not the first time
+			overlapOutput(buffer_size_1, outputBuffer1,1);
 
 		/* 3. Asynchronous launch of kernel for buffer *0* */
 		overlapLaunchKernel0(stream_num_0);
 
 		/* 4. Fill buffer *1*, Overlap with kernel 0 */
 		overlapFillBufferUnmap1(&stream_num_1, &buffer_size_1, &map_event_1);
-		if(i != 0)
+		if(i > 1)
 			bytes += buffer_size_1;
 
 		/* -------------------------------------------------------------
 		  This is a CPU/GPU synchronization point, as all commands in the
-        in-order queue before the preceding cl*Unmap() are now finished.
-        We can accurately sample the per-loop timer here.
+		in-order queue before the preceding cl*Unmap() are now finished.
+		We can accurately sample the per-loop timer here.
 		------------------------------------------------------------- */
 		first = 1;
 		do {
@@ -945,32 +936,36 @@ AESEncryptDecrypt::runCLKernels(void)
 		timeLog->Msg( "%s %d\n", ">>>>>>>>Time point arrived : ", elapsed_time);
 		loopcounter.Reset();
 		loopcounter.Start();
+		/* ------------------------------------------------------------- */
 
 
 		/* 5. Map buffer *0*, The map needs to precede
-        the next kernel launch in the in-order queue, otherwise waiting
-        for the map to finish would also wait for the kernel to finish.*/
+		the next kernel launch in the in-order queue, otherwise waiting
+		for the map to finish would also wait for the kernel to finish.*/
 		overlapMapBuffer0(&map_event_0);
 
 		// The output buffer 0
-		//overlapOutput(buffer_size_0, outputBuffer,0);
+		overlapOutput(buffer_size_0, outputBuffer,0);
+		buffer1_launched = true;
 
 		/* 6. Asynchronous launch of kernel for buffer *1* */
 		overlapLaunchKernel1(stream_num_1);
-		buffer1_launched = true;
 	}
 
 	status = clFinish(commandQueue);
-    CHECK_OPENCL_ERROR(status, "clFlush() failed.");
+	CHECK_OPENCL_ERROR(status, "clFlush() failed.");
     
-    status = clReleaseEvent(map_event_0);
-    CHECK_OPENCL_ERROR(status, "clReleaseEvent() failed.");
+	status = clReleaseEvent(map_event_0);
+	CHECK_OPENCL_ERROR(status, "clReleaseEvent() failed.");
 
 	counter.Stop();
 
 	std::cout << "End of execution, now the program costs : " << counter.GetTotalTime() << " ms" 
 		<< ", bits : " << bytes * 8 << std::endl;
 	std::cout << "Processing speed is " << ((bytes * 8) / 1e3) / counter.GetTotalTime() << " Mbps" << std::endl;
+
+	uint64_t speed = (AVG_RATE/1000) * (STREAM_NUM/1000);
+	std::cout << "Theoretical speed is " << speed << " Mbps" << std::endl;
 
 	return SDK_SUCCESS;
 }
@@ -982,17 +977,6 @@ AESEncryptDecrypt::initialize()
 	if(this->SDKSample::initialize())
 		return SDK_FAILURE;
 
-	streamsdk::Option* decrypt_opt = new streamsdk::Option;
-	CHECK_ALLOCATION(decrypt_opt, "Memory allocation error.\n"); 
-
-	decrypt_opt->_sVersion = "z";
-	decrypt_opt->_lVersion = "decrypt";
-	decrypt_opt->_description = "Decrypt the Input Image"; 
-	decrypt_opt->_type     = streamsdk::CA_NO_ARGUMENT;
-	decrypt_opt->_value    = &decrypt;
-	sampleArgs->AddOption(decrypt_opt);
-
-	delete decrypt_opt;
 
 	streamsdk::Option* num_iterations = new streamsdk::Option;
 	CHECK_ALLOCATION(num_iterations, "Memory allocation error.\n");
@@ -1006,6 +990,19 @@ AESEncryptDecrypt::initialize()
 	sampleArgs->AddOption(num_iterations);
 
 	delete num_iterations;
+
+	streamsdk::Option* show = new streamsdk::Option;
+	CHECK_ALLOCATION(show, "Memory allocation error.\n");
+
+	show->_sVersion = "l";
+	show->_lVersion = "show the log";
+	show->_description = "To show the log of each loop";
+	show->_type = streamsdk::CA_ARG_INT;
+	show->_value = &show_log;
+
+	sampleArgs->AddOption(show);
+
+	delete show;
 
 	return SDK_SUCCESS;
 }
@@ -1034,8 +1031,7 @@ AESEncryptDecrypt::setup()
 int 
 AESEncryptDecrypt::run()
 {
-	std::cout << "Executing kernel for " << iterations << 
-		" iterations" << std::endl;
+	std::cout << "Executing kernel for " << iterations << " iterations" << std::endl;
 	std::cout << "-------------------------------------------" << std::endl;
 
 	int timer = sampleCommon->createTimer();
@@ -1054,9 +1050,9 @@ AESEncryptDecrypt::run()
 
 void AESEncryptDecrypt::printStats()
 {
-	totalTime = setupTime + totalKernelTime;
-
-	timeLog->printLog();
+	if (show_log) {
+		timeLog->printLog();
+	}
 
 	std::cout << "\n-------------------------------------------------\n";
 
@@ -1141,11 +1137,11 @@ int main(int argc, char * argv[])
 	if(clAESEncryptDecrypt.run() != SDK_SUCCESS)
 		return SDK_FAILURE;
 	clAESEncryptDecrypt.printStats();
-	if(clAESEncryptDecrypt.cleanup() != SDK_SUCCESS)
-		return SDK_FAILURE;
+	//if(clAESEncryptDecrypt.cleanup() != SDK_SUCCESS)
+	//	return SDK_FAILURE;
 
 	return SDK_SUCCESS;
 }
 
 
-#endif // TRANSFER_OVERLAP
+//#endif // TRANSFER_OVERLAP

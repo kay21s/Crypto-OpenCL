@@ -754,7 +754,7 @@ AES_128_encrypt(__global uchar *in,
 
 
 __kernel 
-void AES_cbc_128_encrypt_new(__global uchar * output  ,
+void AES_cbc_128_encrypt(__global uchar * output  ,
                 __global uchar * input   ,
                 const uint num_flows   , 
                 const uint rounds   ,
@@ -785,9 +785,6 @@ void AES_cbc_128_encrypt_new(__global uchar * output  ,
 	
 	uint idx =  localSizex * blockIdx + localIdx; 
 
-	// !!!for test
-	//output[idx]=input[idx];
-	//return;
 	/* initialize T boxes */
 	for (uint i = 0 ; i * localSizex < 256 ; i++) {
 		uint index = localIdx + i * localSizex;
@@ -823,6 +820,12 @@ void AES_cbc_128_encrypt_new(__global uchar * output  ,
 	/* Encrypt using cbc mode */
 	uint len = pkt_offset[idx + 1] - pkt_offset[idx];
 	__global uchar *iv = ivec;
+
+	/* !!!for test
+	output[idx]=input[idx];
+	return; 
+	*/
+
 
 	while (len > 0) {
 		// ulong is 64 bits in OpenCL

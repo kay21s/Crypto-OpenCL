@@ -6,6 +6,7 @@
 #else
 #include <sys/time.h>
 #include <time.h>
+#include <stdlib.h>
 #endif
 
 /*
@@ -149,7 +150,7 @@ unsigned int StreamGenerator::GetStreams(unsigned char *buffer, unsigned int buf
 	_times ++;
 	stream_offset[0] = 0;
 	time_point = _interval * _times;
-
+#if 1
 	for (unsigned int i = 0; i < _stream_num; i ++) {
 
 		// For Each Stream
@@ -197,6 +198,24 @@ unsigned int StreamGenerator::GetStreams(unsigned char *buffer, unsigned int buf
 	} while(abs(elapsed_time - time_point) > 1);*/
 
 	return stream_offset[stream];
+#else
+
+	unsigned int frame_size = 256;
+	unsigned int frame_num = 4096;
+	unsigned int i = 0;
+
+	if (frame_size * frame_num >= buffer_size)
+		std::cout<<"Exceed the buffer size!" << std::endl;
+
+	for (i = 0; i < frame_num; i ++) {
+		stream_offset[i+1] = stream_offset[i] + frame_size;
+	}
+	*stream_num = frame_num;
+	set_random( &(keyBuffer[0]), 16*frame_num);
+	set_random( &(ivBuffer[0]), 16*frame_num);
+	set_random( &(buffer[0]), frame_size*frame_num);
+	return stream_offset[i];
+#endif
 }
 
 unsigned int StreamGenerator::GetMaxBufferSize()

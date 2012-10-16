@@ -71,7 +71,7 @@ public:
 	 *
 	 * Return unit is us~~~~~
      */
-	double CPerfCounter::GetTotalTime(void);
+    double GetTotalTime(void);
 
 	// time from _start to now
     double GetElapsedTime(void);
